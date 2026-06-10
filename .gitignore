@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.Python
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+env/
+.streamlit/secrets.toml
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.log
+dist/
+build/

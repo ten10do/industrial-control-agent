@@ -1,0 +1,32 @@
+CONTROL_EXAMPLES = {
+    "电机启停控制": {
+        "control_object": "三相异步电机",
+        "control_goal": "实现启动、停止和过载保护",
+        "input_signals": "启动按钮、停止按钮、急停按钮、热继电器过载信号",
+        "output_devices": "接触器、运行指示灯、故障报警灯",
+        "control_requirements": "按下启动按钮电机运行，按下停止按钮电机停止；急停或过载时立即停机并报警。",
+        "safety_requirements": "急停按钮和热继电器过载信号触发时立即切断接触器输出，故障报警灯保持报警，故障复位后才允许重新启动。",
+        "include_plc_design": True,
+        "include_debug_steps": True,
+    },
+    "水泵液位控制": {
+        "control_object": "水泵",
+        "control_goal": "根据水箱液位自动启停",
+        "input_signals": "高液位传感器、低液位传感器、启动按钮、停止按钮",
+        "output_devices": "水泵、运行指示灯、故障报警灯",
+        "control_requirements": "低液位启动水泵，高液位停止水泵；传感器异常时报警。",
+        "safety_requirements": "高低液位信号同时异常或传感器状态不一致时停止自动控制并报警，人工确认后再恢复运行。",
+        "include_plc_design": True,
+        "include_debug_steps": True,
+    },
+    "两级传送带顺序控制": {
+        "control_object": "两级传送带",
+        "control_goal": "实现顺序启动和逆序停止",
+        "input_signals": "启动按钮、停止按钮、急停按钮、物料检测传感器",
+        "output_devices": "传送带电机 M1、传送带电机 M2、报警灯",
+        "control_requirements": "启动时先启动 M1，再延时启动 M2；停止时先停止 M2，再停止 M1；急停时全部停止。",
+        "safety_requirements": "急停触发时 M1 和 M2 全部立即停止；物料检测异常或堵料风险出现时报警并禁止继续启动。",
+        "include_plc_design": True,
+        "include_debug_steps": True,
+    },
+}
