@@ -37,7 +37,7 @@ def build_markdown_report(inputs: dict, results: dict) -> str:
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     final_report = results.get("final_report", "")
 
-    return f"""# 基于大模型的工业控制方案设计 Agent 报告
+    return f"""# 基于大模型的工业控制方案设计 Agent 系统报告
 
 生成时间：{generated_at}
 

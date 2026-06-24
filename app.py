@@ -55,7 +55,7 @@ def init_state() -> None:
 
 
 def render_header() -> None:
-    st.title("工业控制方案设计 Agent")
+    st.title("基于大模型的工业控制方案设计 Agent 系统")
     st.markdown(
         """
         面向自动化控制系统初步设计场景，输入控制对象、I/O 信号、控制要求和安全要求后，
@@ -164,7 +164,7 @@ def render_generation_error(exc: Exception) -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="工业控制方案设计 Agent", page_icon="⚙️", layout="wide")
+    st.set_page_config(page_title="基于大模型的工业控制方案设计 Agent 系统", page_icon="⚙️", layout="wide")
     init_state()
     render_header()
 
