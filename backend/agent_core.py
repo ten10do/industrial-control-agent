@@ -3,8 +3,12 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from .llm_client import LLMClient
-from .schemas import GenerateRequest, GenerateResponse, IOPoint, OptimizeRequest, OptimizeResponse
+if __package__:
+    from .llm_client import LLMClient
+    from .schemas import GenerateRequest, GenerateResponse, IOPoint, OptimizeRequest, OptimizeResponse
+else:
+    from llm_client import LLMClient
+    from schemas import GenerateRequest, GenerateResponse, IOPoint, OptimizeRequest, OptimizeResponse
 
 
 SAFETY_NOTICE = "方案仅供课程设计和工程参考，实际工程需由专业工程师复核。"

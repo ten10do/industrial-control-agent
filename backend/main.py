@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Request
@@ -6,9 +7,17 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from .agent_core import AgentCoreError, generate_control_plan, optimize_control_plan
-from .llm_client import DeepSeekLLMClient, LLMClientError
-from .schemas import ErrorResponse, GenerateRequest, GenerateResponse, OptimizeRequest, OptimizeResponse
+if __package__:
+    from .agent_core import AgentCoreError, generate_control_plan, optimize_control_plan
+    from .llm_client import DeepSeekLLMClient, LLMClientError
+    from .schemas import ErrorResponse, GenerateRequest, GenerateResponse, OptimizeRequest, OptimizeResponse
+else:
+    from agent_core import AgentCoreError, generate_control_plan, optimize_control_plan
+    from llm_client import DeepSeekLLMClient, LLMClientError
+    from schemas import ErrorResponse, GenerateRequest, GenerateResponse, OptimizeRequest, OptimizeResponse
+
+
+PROJECT_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
 
 class APIServiceError(RuntimeError):
@@ -28,7 +37,7 @@ def _allowed_origins() -> list[str]:
 
 
 def get_llm_client() -> DeepSeekLLMClient:
-    load_dotenv()
+    load_dotenv(PROJECT_ENV_FILE)
     return DeepSeekLLMClient()
 
 

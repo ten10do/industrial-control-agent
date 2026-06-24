@@ -61,6 +61,8 @@ button:disabled {
 .app-shell {
   display: grid;
   grid-template-columns: 286px minmax(0, 1fr);
+  width: 100%;
+  min-width: 0;
   min-height: 100vh;
 }
 
@@ -70,6 +72,7 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 22px;
+  min-width: 0;
   height: 100vh;
   padding: 22px 18px;
   overflow-y: auto;
@@ -278,6 +281,8 @@ button:disabled {
 
 .main-content {
   width: min(1220px, 100%);
+  min-width: 0;
+  max-width: 100%;
   margin: 0 auto;
   padding: 34px 38px 24px;
 }
@@ -570,6 +575,7 @@ h1 {
 }
 
 .result-panel {
+  min-width: 0;
   margin-top: 18px;
   overflow: hidden;
 }
