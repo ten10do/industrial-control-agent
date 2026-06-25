@@ -1,4 +1,4 @@
-# 基于 React + FastAPI 的工业控制方案设计 Agent 系统
+# 基于大模型的工业控制方案设计 Agent 平台
 
 一个面向自动化控制系统方案设计场景的 AI Agent 项目。系统采用 React + FastAPI 前后端分离架构，前端负责控制任务输入和结果展示，后端负责接口协议、Agent Workflow 编排和 DeepSeek API 调用封装。
 
