@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Copy, ShieldCheck } from "lucide-react";
+import { Check, Copy, ShieldAlert } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -14,7 +14,9 @@ function ReportPreview({ markdown, safetyNotice }) {
     textArea.style.position = "fixed";
     textArea.style.opacity = "0";
     document.body.appendChild(textArea);
+    textArea.focus();
     textArea.select();
+    textArea.setSelectionRange(0, text.length);
     const copied = document.execCommand("copy");
     document.body.removeChild(textArea);
     if (!copied) {
@@ -42,7 +44,11 @@ function ReportPreview({ markdown, safetyNotice }) {
     setCopyStatus("copying");
     try {
       if (navigator.clipboard && window.isSecureContext) {
-        await copyWithClipboard(markdown);
+        try {
+          await copyWithClipboard(markdown);
+        } catch {
+          copyWithTextArea(markdown);
+        }
       } else {
         copyWithTextArea(markdown);
       }
@@ -58,8 +64,8 @@ function ReportPreview({ markdown, safetyNotice }) {
     <div className="report-preview">
       <div className="report-toolbar">
         <div>
-          <strong>Markdown 方案报告</strong>
-          <span>可直接复制到项目文档</span>
+          <strong>Markdown 完整方案报告</strong>
+          <span>可复制到课程设计文档、调试记录或项目说明中。</span>
         </div>
         <div className="copy-action">
           <button className="button button-secondary button-compact" type="button" onClick={copyReport}>
@@ -85,8 +91,8 @@ function ReportPreview({ markdown, safetyNotice }) {
       </article>
 
       <div className="report-safety-notice">
-        <ShieldCheck size={18} aria-hidden="true" />
-        <span>{safetyNotice}</span>
+        <ShieldAlert size={18} aria-hidden="true" />
+        <span>安全提示：{safetyNotice}</span>
       </div>
     </div>
   );

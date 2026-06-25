@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Factory, ShieldCheck } from "lucide-react";
+import { ShieldAlert } from "lucide-react";
 
 import { checkHealth, fetchExamples, generateControlPlan } from "./api";
 import ErrorMessage from "./components/ErrorMessage";
+import IndustrialHeader from "./components/IndustrialHeader";
 import LoadingState from "./components/LoadingState";
 import ResultTabs from "./components/ResultTabs";
 import ScenarioForm from "./components/ScenarioForm";
 import Sidebar from "./components/Sidebar";
+import StatusPanel from "./components/StatusPanel";
 
 
 const EMPTY_FORM = {
@@ -15,6 +17,8 @@ const EMPTY_FORM = {
   output_devices: "",
   control_requirements: "",
 };
+
+const SAFETY_NOTICE = "方案仅供课程设计和工程参考，实际工程需由专业工程师复核。";
 
 
 function App() {
@@ -30,6 +34,11 @@ function App() {
   const selectedExample = useMemo(
     () => examples.find((example) => example.name === selectedExampleName) ?? null,
     [examples, selectedExampleName],
+  );
+
+  const hasInput = useMemo(
+    () => Object.values(formData).some((value) => value.trim()),
+    [formData],
   );
 
   const refreshBackend = useCallback(async () => {
@@ -88,7 +97,7 @@ function App() {
       return;
     }
     if (backendStatus !== "online") {
-      setErrorMessage("后端服务未连接，请启动 FastAPI 后端后重试。");
+      setErrorMessage("后端服务未连接，请确认 FastAPI 后端可访问后重试。");
       return;
     }
 
@@ -109,54 +118,64 @@ function App() {
 
   return (
     <div className="app-shell">
-      <Sidebar
-        examples={examples}
-        selectedExampleName={selectedExampleName}
-        onSelectExample={setSelectedExampleName}
-        modelProvider={modelProvider}
-        onModelProviderChange={setModelProvider}
-        backendStatus={backendStatus}
-        onRefreshBackend={refreshBackend}
-      />
+      <IndustrialHeader backendStatus={backendStatus} modelProvider={modelProvider} />
 
-      <main className="main-content">
-        <header className="page-header">
-          <div className="brand-mark" aria-hidden="true">
-            <Factory size={26} strokeWidth={1.8} />
-          </div>
-          <div>
-            <p className="eyebrow">INDUSTRIAL CONTROL DESIGN</p>
-            <h1>工业控制方案设计 Agent 系统</h1>
-            <p className="page-description">基于大模型的工业控制方案自动生成系统</p>
-          </div>
-        </header>
-
-        <div className="safety-banner" role="note">
-          <ShieldCheck size={20} aria-hidden="true" />
-          <span>方案仅供课程设计和工程参考，实际工程需由专业工程师复核。</span>
-        </div>
-
-        {errorMessage && (
-          <ErrorMessage message={errorMessage} onDismiss={() => setErrorMessage("")} />
-        )}
-
-        <ScenarioForm
-          formData={formData}
-          onFieldChange={updateField}
-          onSubmit={handleGenerate}
-          onClear={clearForm}
-          onUseExample={applySelectedExample}
+      <div className="workbench-layout">
+        <Sidebar
+          examples={examples}
           selectedExampleName={selectedExampleName}
-          isLoading={isLoading}
+          onSelectExample={setSelectedExampleName}
+          modelProvider={modelProvider}
+          onModelProviderChange={setModelProvider}
+          backendStatus={backendStatus}
+          onRefreshBackend={refreshBackend}
         />
 
-        {isLoading ? <LoadingState /> : <ResultTabs result={result} />}
+        <main className="main-content">
+          <section className="hero-panel">
+            <div>
+              <p className="eyebrow">SCADA DESIGN WORKBENCH</p>
+              <h1>工业控制方案设计 Agent 系统</h1>
+              <p className="page-description">
+                面向 PLC 初步设计场景，将控制对象、I/O 设备和控制要求转换为需求分析、I/O 点表、联锁逻辑与工程方案报告。
+              </p>
+            </div>
+            <div className="hero-schematic" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </div>
+          </section>
 
-        <footer className="page-footer">
-          <span>Industrial Control Agent</span>
-          <span>React + FastAPI</span>
-        </footer>
-      </main>
+          <div className="safety-banner" role="note">
+            <ShieldAlert size={19} aria-hidden="true" />
+            <span>安全提示：{result?.safety_notice || SAFETY_NOTICE}</span>
+          </div>
+
+          <StatusPanel
+            backendStatus={backendStatus}
+            selectedExampleName={selectedExampleName}
+            hasInput={hasInput}
+            hasResult={Boolean(result)}
+          />
+
+          {errorMessage && (
+            <ErrorMessage message={errorMessage} onDismiss={() => setErrorMessage("")} />
+          )}
+
+          <ScenarioForm
+            formData={formData}
+            onFieldChange={updateField}
+            onSubmit={handleGenerate}
+            onClear={clearForm}
+            onUseExample={applySelectedExample}
+            selectedExampleName={selectedExampleName}
+            isLoading={isLoading}
+          />
+
+          {isLoading ? <LoadingState /> : <ResultTabs result={result} />}
+        </main>
+      </div>
     </div>
   );
 }

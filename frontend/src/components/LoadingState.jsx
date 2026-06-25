@@ -9,7 +9,7 @@ function LoadingState() {
       </div>
       <div>
         <h2>Agent 正在生成控制方案</h2>
-        <p>正在分析控制需求、分配 I/O 点位并整理安全保护逻辑，请稍候。</p>
+        <p>正在分析控制需求、规划 PLC I/O 点位、整理安全联锁与梯形图设计思路，请稍候。</p>
         <div className="loading-track"><span /></div>
       </div>
     </section>

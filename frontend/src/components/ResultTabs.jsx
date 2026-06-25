@@ -13,12 +13,24 @@ import ReportPreview from "./ReportPreview";
 
 const TABS = [
   { key: "requirement_analysis", label: "需求分析", icon: ListChecks },
-  { key: "io_table", label: "PLC I/O 点表", icon: Table2 },
+  { key: "io_table", label: "I/O 点表", icon: Table2 },
   { key: "control_logic", label: "控制逻辑", icon: Network },
-  { key: "safety_design", label: "安全保护", icon: ShieldAlert },
+  { key: "safety_design", label: "安全联锁", icon: ShieldAlert },
   { key: "ladder_idea", label: "梯形图思路", icon: Binary },
-  { key: "report_markdown", label: "完整报告", icon: FileText },
+  { key: "report_markdown", label: "方案报告", icon: FileText },
 ];
+
+
+function normalizeSignalType(signalType = "") {
+  const upper = signalType.toUpperCase();
+  if (upper.includes("DO") || upper.includes("输出")) {
+    return "DO";
+  }
+  if (upper.includes("DI") || upper.includes("输入")) {
+    return "DI";
+  }
+  return signalType || "I/O";
+}
 
 
 function IOTable({ rows }) {
@@ -29,21 +41,28 @@ function IOTable({ rows }) {
           <tr>
             <th>地址</th>
             <th>信号名称</th>
-            <th>类型</th>
+            <th>信号类型</th>
             <th>设备</th>
-            <th>功能说明</th>
+            <th>描述</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, index) => (
-            <tr key={`${row.address}-${row.signal_name}-${index}`}>
-              <td><code>{row.address}</code></td>
-              <td>{row.signal_name}</td>
-              <td><span className="signal-type">{row.signal_type}</span></td>
-              <td>{row.device}</td>
-              <td>{row.description}</td>
-            </tr>
-          ))}
+          {rows.map((row, index) => {
+            const signalTag = normalizeSignalType(row.signal_type);
+            return (
+              <tr key={`${row.address}-${row.signal_name}-${index}`}>
+                <td><code>{row.address}</code></td>
+                <td>{row.signal_name}</td>
+                <td>
+                  <span className={`signal-type ${signalTag === "DO" ? "do" : "di"}`}>
+                    {signalTag}
+                  </span>
+                </td>
+                <td>{row.device}</td>
+                <td>{row.description}</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -64,8 +83,10 @@ function ResultTabs({ result }) {
     return (
       <section className="panel empty-result" aria-label="控制方案结果">
         <div className="empty-result-icon"><FileText size={27} aria-hidden="true" /></div>
-        <h2>等待生成控制方案</h2>
-        <p>完成参数输入后，Agent 生成的需求分析、I/O 点表和完整报告将在这里展示。</p>
+        <div>
+          <h2>等待生成控制方案</h2>
+          <p>完成控制任务配置后，Agent 生成的需求分析、PLC I/O 点表、联锁逻辑和完整 Markdown 报告将在这里展示。</p>
+        </div>
       </section>
     );
   }
@@ -74,8 +95,8 @@ function ResultTabs({ result }) {
     <section className="panel result-panel" aria-labelledby="result-heading">
       <div className="panel-heading result-heading">
         <div>
-          <p className="panel-kicker">AGENT OUTPUT</p>
-          <h2 id="result-heading">控制方案生成结果</h2>
+          <p className="panel-kicker">PLC DESIGN OUTPUT</p>
+          <h2 id="result-heading">工程报告面板</h2>
         </div>
         <span className="result-status">生成完成</span>
       </div>
