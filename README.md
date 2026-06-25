@@ -207,33 +207,43 @@ http://localhost:5173
 
 ## 截图说明
 
-当前仓库暂未提交截图文件。建议后续在 `screenshots/` 目录保存以下截图，用于 GitHub README 和简历项目展示：
+以下截图基于本地 Fake LLM / mock 后端生成，用于展示项目主要功能，不消耗真实大模型 API 额度。
 
-```text
-screenshots/01_scada_home.png
-screenshots/02_scenario_form.png
-screenshots/03_generated_plan.png
-screenshots/04_io_table.png
-screenshots/05_mobile_layout.png
-```
+### 首页与状态面板
 
-建议截图内容：
+展示前端首页、后端连接状态、示例场景区域和控制任务输入区。
 
-- `01_scada_home.png`：前端首页、顶部状态栏和功能导航区域。
-- `02_scenario_form.png`：示例场景选择和控制任务输入表单。
-- `03_generated_plan.png`：生成后的需求分析、控制逻辑和安全联锁结果。
-- `04_io_table.png`：PLC I/O 点表和 DI / DO 标签。
-- `05_mobile_layout.png`：390px 移动端适配效果。
+![首页与状态面板](screenshots/01_home_dashboard.png)
 
-如果后续添加截图，可在本节直接引用：
+### 示例场景填充
 
-```markdown
-![前端首页](screenshots/01_scada_home.png)
-![控制任务配置表单](screenshots/02_scenario_form.png)
-![控制方案生成结果](screenshots/03_generated_plan.png)
+展示选择“水塔水位控制系统”示例后，控制对象、输入设备、输出设备和控制要求已自动填充。
+
+![示例场景填充](screenshots/02_scenario_form.png)
+
+### Agent 方案生成结果
+
+展示生成后的控制需求分析、结果 Tabs 和工程师复核安全声明。
+
+![Agent 方案生成结果](screenshots/03_generated_plan.png)
+
+### PLC I/O 点表
+
+展示 PLC I/O 点表，包括地址、信号名称、信号类型、设备和描述。
+
 ![PLC I/O 点表](screenshots/04_io_table.png)
-![移动端布局](screenshots/05_mobile_layout.png)
-```
+
+### Markdown 方案报告
+
+展示 Markdown 完整方案报告预览和复制报告入口。
+
+![Markdown 方案报告](screenshots/05_report_preview.png)
+
+### 移动端布局
+
+展示 390px 左右宽度下的响应式页面布局。
+
+![移动端布局](screenshots/06_mobile_layout.png)
 
 ## 安全声明
 
