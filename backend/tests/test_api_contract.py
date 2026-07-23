@@ -79,6 +79,7 @@ def test_generate_contract(client: TestClient) -> None:
         "ladder_idea",
         "report_markdown",
         "safety_notice",
+        "validation_report",
     }
     assert isinstance(payload["io_table"], list)
     assert set(payload["io_table"][0]) == {
@@ -89,6 +90,8 @@ def test_generate_contract(client: TestClient) -> None:
         "description",
     }
     assert SAFETY_NOTICE_FRAGMENT in payload["safety_notice"]
+    assert payload["validation_report"]["total_rules"] == 14
+    assert payload["validation_report"]["request_id"] == response.headers["x-request-id"]
 
 
 def test_optimize_contract(client: TestClient) -> None:
@@ -106,8 +109,11 @@ def test_optimize_contract(client: TestClient) -> None:
         "optimized_report",
         "change_summary",
         "safety_notice",
+        "validation_report",
     }
     assert SAFETY_NOTICE_FRAGMENT in response.json()["safety_notice"]
+    assert response.json()["validation_report"]["total_rules"] == 14
+    assert response.json()["validation_report"]["request_id"] == response.headers["x-request-id"]
 
 
 def test_error_response_includes_request_id_header_and_body(client: TestClient) -> None:

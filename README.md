@@ -101,6 +101,7 @@ DeepSeek API
 - Markdown 报告生成与复制
 - 后端连接状态显示
 - 方案优化 API
+- 确定性规则校验、风险评分与前端风险面板
 - 友好错误提示与 Request ID 展示
 
 ## Agent Workflow
@@ -117,10 +118,54 @@ POST /generate
   → 校验 PLC I/O 点表
   → 校验控制逻辑、安全设计和梯形图思路
   → 汇总 Markdown 方案报告
+  → 执行确定性工业控制规则校验
+  → 计算风险分数并附加 validation_report
   → 返回结构化响应
 ```
 
-生成流程通过一次模型调用取得完整结构化结果，再由后端逐步解析、校验和组装。`/optimize` 使用相同的请求追踪与错误处理机制，对已有 Markdown 方案执行优化并返回变更摘要。每个 Workflow 步骤都会记录成功或失败状态及执行耗时。
+生成流程通过一次模型调用取得完整结构化结果，再由后端逐步解析、校验和组装。规则校验在结构化方案生成完成后本地执行，不依赖 LLM。`/optimize` 使用相同的请求追踪与错误处理机制，对已有 Markdown 方案执行优化、返回变更摘要，并对可可靠判断的文本规则再次校验。每个 Workflow 步骤都会记录成功或失败状态及执行耗时。
+
+## 工业控制规则校验与风险评估
+
+规则引擎以固定顺序执行 14 条确定性规则，优先使用结构化 I/O 点表；文本字段采用集中维护的中英文关键词、别名、句段边界和否定语义策略。无法可靠判断的规则返回 `not_applicable`，单条规则异常会转换为脱敏的稳定结果，不会让方案生成接口失败。
+
+| Rule ID | 规则 | 类别 | 严重程度 |
+| --- | --- | --- | --- |
+| `IO_DUPLICATE_ADDRESS` | I/O 地址重复 | io | high |
+| `IO_DUPLICATE_NAME` | I/O 点位名称重复 | io | medium |
+| `IO_TYPE_MISMATCH` | 输入输出类型不匹配 | io | high |
+| `START_STOP_INCOMPLETE` | 启停控制不完整 | control | high |
+| `EMERGENCY_STOP_MISSING` | 急停逻辑缺失 | safety | critical |
+| `MOTOR_OVERLOAD_PROTECTION_MISSING` | 电机过载保护缺失 | protection | high |
+| `MUTUAL_INTERLOCK_MISSING` | 互锁保护缺失 | interlock | critical |
+| `ACTUATOR_FEEDBACK_MISSING` | 执行器反馈缺失 | feedback | medium |
+| `ALARM_COVERAGE_INCOMPLETE` | 报警覆盖不足 | alarm | medium |
+| `PUMP_DRY_RUN_PROTECTION_MISSING` | 水泵防干转保护缺失 | protection | critical |
+| `ACTION_TIMEOUT_PROTECTION_MISSING` | 动作超时保护缺失 | protection | high |
+| `MODE_INTERLOCK_MISSING` | 自动/手动模式互锁缺失 | interlock | high |
+| `SAFE_STATE_UNDEFINED` | 安全默认状态未定义 | safety | critical |
+| `IO_TABLE_INCOMPLETE` | I/O 点表为空或结构不完整 | io | high |
+
+仅 `warning` 和 `failed` 结果计分，同一 `rule_id` 最多计分一次；`passed` 与 `not_applicable` 不计分。
+
+| 严重程度 | 权重 |
+| --- | ---: |
+| critical | 30 |
+| high | 15 |
+| medium | 8 |
+| low | 3 |
+| info | 0 |
+
+| 风险分数 | 风险等级 |
+| --- | --- |
+| 0–9 | low |
+| 10–24 | medium |
+| 25–49 | high |
+| 50 及以上 | critical |
+
+当校验引擎整体不可用时，报告使用 `validation_status=unavailable`、`risk_level=unknown` 和 `risk_score=0`，同时将规则统计置空；此时的零分表示“未完成风险评估”，不表示低风险。单条规则异常则返回 `partial`，并继续执行其他规则。
+
+`/generate` 和 `/optimize` 在保留原有字段的基础上附加可选的 `validation_report`，包含风险等级、风险分数、规则统计、问题列表、固定顺序的全部规则结果和 `request_id`。前端风险面板展示汇总指标（包括 `not_applicable` 数量）、证据、修改建议和相关设备或点位，支持按严重程度及类别筛选，并默认隐藏 `not_applicable` 结果。后端回归使用 Fake LLM、Mock 和固定方案数据执行，不会由规则引擎发起网络或模型调用。
 
 ## 链路稳定性与测试
 
@@ -140,11 +185,12 @@ POST /generate
 
 ### 自动化回归
 
-后端测试使用 Fake LLM 和 Mock 覆盖正常 Workflow、API 协议、请求标识、错误清洗、模型超时、有限重试和响应格式异常，不会发起真实模型调用。
+后端测试使用 Fake LLM、Mock 和固定方案数据覆盖正常 Workflow、API 协议、请求标识、错误清洗、模型超时、有限重试、响应格式异常、14 条规则、评分边界、异常隔离，以及原有与审查回归两组共 20 个固定工业控制场景，不会发起真实模型调用。
 
 | 验证项 | 命令 | 当前结果 |
 | --- | --- | --- |
-| 后端回归测试 | `python -m pytest backend\tests -q` | 17 passed |
+| 后端回归测试 | `python -m pytest backend\tests -q` | 137 passed |
+| 前端组件测试 | `npm.cmd run test` | 4 passed |
 | 前端生产构建 | `npm.cmd run build` | 通过 |
 
 GitHub Actions CI 在以下场景自动触发：
@@ -153,7 +199,7 @@ GitHub Actions CI 在以下场景自动触发：
 - 创建或更新面向 `main` 的 Pull Request
 - 手动运行 `workflow_dispatch`
 
-CI 的 `Backend Tests` 任务执行 Python 语法检查和 pytest 后端回归测试；`Frontend Build` 任务执行 `npm ci` 和 Vite 生产构建。
+CI 的 `Backend Tests` 任务执行 Python 语法检查和 pytest 后端回归测试；`Frontend Build` 任务执行 `npm ci`、前端组件测试和 Vite 生产构建。
 
 ## 项目亮点
 

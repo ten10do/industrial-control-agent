@@ -8,11 +8,13 @@ if __package__:
     from .llm_client import LLMClient
     from .observability import workflow_step
     from .schemas import GenerateRequest, GenerateResponse, IOPoint, OptimizeRequest, OptimizeResponse
+    from .validation import ValidationContext, ValidationIOPoint, validate_context
 else:
     from errors import LLMResponseFormatError, SkillExecutionError, WorkflowExecutionError
     from llm_client import LLMClient
     from observability import workflow_step
     from schemas import GenerateRequest, GenerateResponse, IOPoint, OptimizeRequest, OptimizeResponse
+    from validation import ValidationContext, ValidationIOPoint, validate_context
 
 
 SAFETY_NOTICE = "Plan is for coursework and engineering reference only; a qualified engineer must review before use."
@@ -64,21 +66,26 @@ def _required_text(payload: dict[str, Any], field: str) -> str:
 
 
 def _normalize_io_table(value: Any) -> list[IOPoint]:
-    if not isinstance(value, list) or not value:
+    if not isinstance(value, list):
         raise SkillExecutionError("Workflow step returned an invalid I/O table")
+
+    def scalar_text(raw_value: Any) -> str:
+        if isinstance(raw_value, (str, int, float, bool)):
+            return str(raw_value).strip()
+        return ""
 
     rows: list[IOPoint] = []
     try:
         for item in value:
             if not isinstance(item, dict):
-                raise SkillExecutionError("Workflow step returned an invalid I/O table")
+                item = {}
             rows.append(
                 IOPoint(
-                    address=str(item.get("address", "")).strip(),
-                    signal_name=str(item.get("signal_name", "")).strip(),
-                    signal_type=str(item.get("signal_type", "")).strip(),
-                    device=str(item.get("device", "")).strip(),
-                    description=str(item.get("description", "")).strip(),
+                    address=scalar_text(item.get("address", "")),
+                    signal_name=scalar_text(item.get("signal_name", "")),
+                    signal_type=scalar_text(item.get("signal_type", "")),
+                    device=scalar_text(item.get("device", "")),
+                    description=scalar_text(item.get("description", "")),
                 )
             )
     except ValidationError as exc:
@@ -90,6 +97,90 @@ def _append_safety_notice(report: str) -> str:
     if SAFETY_NOTICE in report:
         return report
     return f"{report.rstrip()}\n\n## Safety notice\n\n{SAFETY_NOTICE}"
+
+
+def _join_text(*values: str) -> str:
+    return "\n".join(value.strip() for value in values if value and value.strip())
+
+
+def _validation_io_points(io_table: list[IOPoint]) -> tuple[ValidationIOPoint, ...]:
+    return tuple(
+        ValidationIOPoint(
+            address=point.address,
+            signal_name=point.signal_name,
+            signal_type=point.signal_type,
+            device=point.device,
+            description=point.description,
+        )
+        for point in io_table
+    )
+
+
+def _generate_validation_context(
+    request: GenerateRequest,
+    response: GenerateResponse,
+    request_id: str | None,
+) -> ValidationContext:
+    io_text = _join_text(
+        *(
+            " ".join(
+                (
+                    point.address,
+                    point.signal_name,
+                    point.signal_type,
+                    point.device,
+                    point.description,
+                )
+            )
+            for point in response.io_table
+        )
+    )
+    return ValidationContext(
+        source="generate",
+        request_id=request_id,
+        scenario_text=_join_text(
+            request.control_object,
+            request.input_devices,
+            request.output_devices,
+            request.control_requirements,
+        ),
+        plan_text=_join_text(
+            response.requirement_analysis,
+            io_text,
+            response.control_logic,
+            response.safety_design,
+            response.ladder_idea,
+            response.report_markdown,
+        ),
+        io_points=_validation_io_points(response.io_table),
+        structured_io_available=True,
+        control_object=request.control_object,
+        input_devices=request.input_devices,
+        output_devices=request.output_devices,
+        control_requirements=request.control_requirements,
+        requirement_analysis=response.requirement_analysis,
+        control_logic=response.control_logic,
+        safety_design=response.safety_design,
+        ladder_idea=response.ladder_idea,
+        report_text=response.report_markdown,
+    )
+
+
+def _optimize_validation_context(
+    request: OptimizeRequest,
+    response: OptimizeResponse,
+    request_id: str | None,
+) -> ValidationContext:
+    return ValidationContext(
+        source="optimize",
+        request_id=request_id,
+        scenario_text=_join_text(request.original_report, request.optimize_requirement),
+        plan_text=response.optimized_report,
+        structured_io_available=False,
+        control_requirements=request.optimize_requirement,
+        report_text=response.optimized_report,
+        change_summary=response.change_summary,
+    )
 
 
 def generate_control_plan(
@@ -132,7 +223,7 @@ Required JSON fields:
     with workflow_step(workflow_name, "report_generation", request_id=request_id):
         report = _append_safety_notice(_required_text(payload, "report_markdown"))
 
-    return GenerateResponse(
+    response = GenerateResponse(
         requirement_analysis=requirement_analysis,
         io_table=io_table,
         control_logic=control_logic,
@@ -141,6 +232,9 @@ Required JSON fields:
         report_markdown=report,
         safety_notice=SAFETY_NOTICE,
     )
+    with workflow_step(workflow_name, "rule_validation", request_id=request_id):
+        validation_report = validate_context(_generate_validation_context(request, response, request_id))
+    return response.model_copy(update={"validation_report": validation_report})
 
 
 def optimize_control_plan(
@@ -173,8 +267,11 @@ Required JSON fields:
     with workflow_step(workflow_name, "change_summary", request_id=request_id):
         change_summary = _required_text(payload, "change_summary")
 
-    return OptimizeResponse(
+    response = OptimizeResponse(
         optimized_report=optimized_report,
         change_summary=change_summary,
         safety_notice=SAFETY_NOTICE,
     )
+    with workflow_step(workflow_name, "rule_validation", request_id=request_id):
+        validation_report = validate_context(_optimize_validation_context(request, response, request_id))
+    return response.model_copy(update={"validation_report": validation_report})
