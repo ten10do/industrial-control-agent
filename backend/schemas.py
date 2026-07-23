@@ -46,5 +46,7 @@ class OptimizeResponse(BaseModel):
 
 
 class ErrorResponse(BaseModel):
+    code: str = "APPLICATION_ERROR"
     message: str
     detail: Optional[str] = None
+    request_id: Optional[str] = None

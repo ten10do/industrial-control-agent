@@ -220,3 +220,11 @@ http://localhost:5173
 展示 390px 左右宽度下的响应式页面布局。
 
 ![移动端布局](screenshots/06_mobile_layout.png)
+
+## 链路稳定性与测试
+
+- 后端为每次请求生成或透传 `X-Request-ID`，并在错误响应中返回 `request_id`，便于前后端排查同一次调用。
+- Agent Workflow 使用结构化日志记录关键步骤，包括 `request_id`、`workflow_name`、`step_name`、`status`、`duration_ms`、`retry_count` 和 `error_type`。
+- 后端统一封装 `SkillExecutionError`、`LLMTimeoutError`、`LLMResponseFormatError` 和 `WorkflowExecutionError`，向前端返回稳定的错误代码与友好消息。
+- LLM Client 设置明确超时，并对临时网络错误、连接错误和服务端临时错误进行最多 2 次有限重试。
+- 自动化测试使用 Fake LLM / Mock 覆盖正常 workflow、request_id、错误清洗、超时、重试和响应格式异常，回归命令为 `python -m pytest backend\tests -v`。

@@ -1,4 +1,5 @@
 import os
+import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -9,11 +10,15 @@ from fastapi.responses import JSONResponse
 
 if __package__:
     from .agent_core import AgentCoreError, generate_control_plan, optimize_control_plan
+    from .errors import AppError, LLMResponseFormatError, LLMTimeoutError, WorkflowExecutionError
     from .llm_client import DeepSeekLLMClient, LLMClientError
+    from .observability import get_request_id, set_request_id
     from .schemas import ErrorResponse, GenerateRequest, GenerateResponse, OptimizeRequest, OptimizeResponse
 else:
     from agent_core import AgentCoreError, generate_control_plan, optimize_control_plan
+    from errors import AppError, LLMResponseFormatError, LLMTimeoutError, WorkflowExecutionError
     from llm_client import DeepSeekLLMClient, LLMClientError
+    from observability import get_request_id, set_request_id
     from schemas import ErrorResponse, GenerateRequest, GenerateResponse, OptimizeRequest, OptimizeResponse
 
 
@@ -26,6 +31,15 @@ class APIServiceError(RuntimeError):
         self.detail = detail
         self.status_code = status_code
         super().__init__(message)
+
+
+def _error_payload(code: str, message: str, detail: str | None = None) -> dict[str, str | None]:
+    return ErrorResponse(
+        code=code,
+        message=message,
+        detail=detail,
+        request_id=get_request_id(),
+    ).model_dump()
 
 
 def _allowed_origins() -> list[str]:
@@ -50,21 +64,49 @@ app.add_middleware(
     allow_origins=_allowed_origins(),
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization"],
+    allow_headers=["Content-Type", "Authorization", "X-Request-ID"],
+    expose_headers=["X-Request-ID"],
 )
+
+
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    set_request_id(request_id)
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
+@app.exception_handler(AppError)
+async def app_error_handler(_: Request, exc: AppError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=_error_payload(exc.code, exc.message, exc.detail),
+        headers={"X-Request-ID": get_request_id() or ""},
+    )
 
 
 @app.exception_handler(APIServiceError)
 async def api_service_error_handler(_: Request, exc: APIServiceError) -> JSONResponse:
-    payload = ErrorResponse(message=exc.message, detail=exc.detail)
-    return JSONResponse(status_code=exc.status_code, content=payload.model_dump())
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=_error_payload("API_SERVICE_ERROR", exc.message, exc.detail),
+        headers={"X-Request-ID": get_request_id() or ""},
+    )
 
 
 @app.exception_handler(RequestValidationError)
 async def validation_error_handler(_: Request, __: RequestValidationError) -> JSONResponse:
-    payload = ErrorResponse(message="请求参数校验失败", detail="请检查必填字段和字段长度。")
-    return JSONResponse(status_code=422, content=payload.model_dump())
-
+    return JSONResponse(
+        status_code=422,
+        content=_error_payload(
+            "VALIDATION_ERROR",
+            "Request validation failed",
+            "Check required fields and field lengths.",
+        ),
+        headers={"X-Request-ID": get_request_id() or ""},
+    )
 
 @app.get("/health")
 def health() -> dict[str, str]:
@@ -117,7 +159,9 @@ def generate(
     llm_client: DeepSeekLLMClient = Depends(get_llm_client),
 ) -> GenerateResponse:
     try:
-        return generate_control_plan(request, llm_client)
+        return generate_control_plan(request, llm_client, request_id=get_request_id())
+    except (LLMTimeoutError, LLMResponseFormatError, WorkflowExecutionError):
+        raise
     except LLMClientError as exc:
         raise APIServiceError("控制方案生成失败", str(exc)) from exc
     except AgentCoreError as exc:
@@ -136,7 +180,9 @@ def optimize(
     llm_client: DeepSeekLLMClient = Depends(get_llm_client),
 ) -> OptimizeResponse:
     try:
-        return optimize_control_plan(request, llm_client)
+        return optimize_control_plan(request, llm_client, request_id=get_request_id())
+    except (LLMTimeoutError, LLMResponseFormatError, WorkflowExecutionError):
+        raise
     except LLMClientError as exc:
         raise APIServiceError("控制方案优化失败", str(exc)) from exc
     except AgentCoreError as exc:

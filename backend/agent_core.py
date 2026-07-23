@@ -4,29 +4,33 @@ from typing import Any
 from pydantic import ValidationError
 
 if __package__:
+    from .errors import LLMResponseFormatError, SkillExecutionError, WorkflowExecutionError
     from .llm_client import LLMClient
+    from .observability import workflow_step
     from .schemas import GenerateRequest, GenerateResponse, IOPoint, OptimizeRequest, OptimizeResponse
 else:
+    from errors import LLMResponseFormatError, SkillExecutionError, WorkflowExecutionError
     from llm_client import LLMClient
+    from observability import workflow_step
     from schemas import GenerateRequest, GenerateResponse, IOPoint, OptimizeRequest, OptimizeResponse
 
 
-SAFETY_NOTICE = "方案仅供课程设计和工程参考，实际工程需由专业工程师复核。"
+SAFETY_NOTICE = "Plan is for coursework and engineering reference only; a qualified engineer must review before use."
 SYSTEM_PROMPT = (
-    "你是一名资深自动化控制系统工程师。输出必须结构清晰、工程化，覆盖控制需求、"
-    "PLC I/O、控制逻辑、安全保护和梯形图设计思路。不要输出 JSON 以外的解释文字。"
+    "You are a senior automation control engineer. Return strict JSON only. "
+    "Cover requirements, PLC I/O, control logic, safety design, ladder idea, and report content."
 )
 MAX_OPTIMIZE_REPORT_CHARS = 24000
 
 
-class AgentCoreError(RuntimeError):
-    """Sanitized workflow error safe to map to an API response."""
+class AgentCoreError(WorkflowExecutionError):
+    """Backward-compatible sanitized workflow error."""
 
 
 def _truncate(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
-    return f"{text[:limit]}\n\n[内容已截断]"
+    return f"{text[:limit]}\n\n[content truncated]"
 
 
 def _parse_json_object(raw_content: str) -> dict[str, Any]:
@@ -40,34 +44,34 @@ def _parse_json_object(raw_content: str) -> dict[str, Any]:
     start = content.find("{")
     end = content.rfind("}")
     if start == -1 or end <= start:
-        raise AgentCoreError("模型返回格式无效")
+        raise LLMResponseFormatError()
 
     try:
         payload = json.loads(content[start : end + 1])
     except json.JSONDecodeError as exc:
-        raise AgentCoreError("模型返回格式无效") from exc
+        raise LLMResponseFormatError() from exc
 
     if not isinstance(payload, dict):
-        raise AgentCoreError("模型返回格式无效")
+        raise LLMResponseFormatError()
     return payload
 
 
 def _required_text(payload: dict[str, Any], field: str) -> str:
     value = payload.get(field)
     if not isinstance(value, str) or not value.strip():
-        raise AgentCoreError("模型返回字段不完整")
+        raise SkillExecutionError("Workflow step returned an incomplete field")
     return value.strip()
 
 
 def _normalize_io_table(value: Any) -> list[IOPoint]:
     if not isinstance(value, list) or not value:
-        raise AgentCoreError("模型返回的 I/O 点表无效")
+        raise SkillExecutionError("Workflow step returned an invalid I/O table")
 
     rows: list[IOPoint] = []
     try:
         for item in value:
             if not isinstance(item, dict):
-                raise AgentCoreError("模型返回的 I/O 点表无效")
+                raise SkillExecutionError("Workflow step returned an invalid I/O table")
             rows.append(
                 IOPoint(
                     address=str(item.get("address", "")).strip(),
@@ -78,76 +82,99 @@ def _normalize_io_table(value: Any) -> list[IOPoint]:
                 )
             )
     except ValidationError as exc:
-        raise AgentCoreError("模型返回的 I/O 点表无效") from exc
+        raise SkillExecutionError("Workflow step returned an invalid I/O table") from exc
     return rows
 
 
 def _append_safety_notice(report: str) -> str:
     if SAFETY_NOTICE in report:
         return report
-    return f"{report.rstrip()}\n\n## 安全声明\n\n{SAFETY_NOTICE}"
+    return f"{report.rstrip()}\n\n## Safety notice\n\n{SAFETY_NOTICE}"
 
 
-def generate_control_plan(request: GenerateRequest, llm_client: LLMClient) -> GenerateResponse:
+def generate_control_plan(
+    request: GenerateRequest,
+    llm_client: LLMClient,
+    request_id: str | None = None,
+) -> GenerateResponse:
+    workflow_name = "generate_control_plan"
     prompt = f"""TASK:GENERATE_CONTROL_PLAN
-请根据以下输入一次性完成工业控制方案设计，并返回严格 JSON。
+Design an industrial control plan and return strict JSON.
 
-控制对象：{request.control_object}
-输入设备：{request.input_devices}
-输出设备：{request.output_devices}
-控制要求：{request.control_requirements}
-模型提供方：{request.model_provider}
+control_object: {request.control_object}
+input_devices: {request.input_devices}
+output_devices: {request.output_devices}
+control_requirements: {request.control_requirements}
+model_provider: {request.model_provider}
 
-JSON 字段必须为：
-- requirement_analysis: 字符串，包含需求、边界、正常与异常工况
-- io_table: 数组，每项固定包含 address、signal_name、signal_type、device、description
-- control_logic: 字符串，包含启动、停止、保持、顺序和状态逻辑
-- safety_design: 字符串，包含急停、联锁、故障、报警和复位条件
-- ladder_idea: 字符串，说明 PLC 梯形图网络划分
-- report_markdown: 字符串，完整 Markdown 方案报告
-
-I/O 地址可采用 I0.0、Q0.0 等通用表示。不要使用 Markdown 代码围栏包裹 JSON。
+Required JSON fields:
+- requirement_analysis: string
+- io_table: array of objects with address, signal_name, signal_type, device, description
+- control_logic: string
+- safety_design: string
+- ladder_idea: string
+- report_markdown: string
 """
 
-    payload = _parse_json_object(llm_client.chat(prompt, SYSTEM_PROMPT))
-    report = _append_safety_notice(_required_text(payload, "report_markdown"))
+    with workflow_step(workflow_name, "llm_call", request_id=request_id):
+        payload = _parse_json_object(llm_client.chat(prompt, SYSTEM_PROMPT, request_id=request_id))
+
+    with workflow_step(workflow_name, "requirement_analysis", request_id=request_id):
+        requirement_analysis = _required_text(payload, "requirement_analysis")
+    with workflow_step(workflow_name, "io_design", request_id=request_id):
+        io_table = _normalize_io_table(payload.get("io_table"))
+    with workflow_step(workflow_name, "control_logic", request_id=request_id):
+        control_logic = _required_text(payload, "control_logic")
+    with workflow_step(workflow_name, "safety_design", request_id=request_id):
+        safety_design = _required_text(payload, "safety_design")
+    with workflow_step(workflow_name, "ladder_design", request_id=request_id):
+        ladder_idea = _required_text(payload, "ladder_idea")
+    with workflow_step(workflow_name, "report_generation", request_id=request_id):
+        report = _append_safety_notice(_required_text(payload, "report_markdown"))
 
     return GenerateResponse(
-        requirement_analysis=_required_text(payload, "requirement_analysis"),
-        io_table=_normalize_io_table(payload.get("io_table")),
-        control_logic=_required_text(payload, "control_logic"),
-        safety_design=_required_text(payload, "safety_design"),
-        ladder_idea=_required_text(payload, "ladder_idea"),
+        requirement_analysis=requirement_analysis,
+        io_table=io_table,
+        control_logic=control_logic,
+        safety_design=safety_design,
+        ladder_idea=ladder_idea,
         report_markdown=report,
         safety_notice=SAFETY_NOTICE,
     )
 
 
-def optimize_control_plan(request: OptimizeRequest, llm_client: LLMClient) -> OptimizeResponse:
+def optimize_control_plan(
+    request: OptimizeRequest,
+    llm_client: LLMClient,
+    request_id: str | None = None,
+) -> OptimizeResponse:
+    workflow_name = "optimize_control_plan"
     original_report = _truncate(request.original_report, MAX_OPTIMIZE_REPORT_CHARS)
     prompt = f"""TASK:OPTIMIZE_CONTROL_PLAN
-请根据优化要求改进现有工业控制方案，并返回严格 JSON。
+Improve the existing industrial control plan and return strict JSON.
 
-原始报告：
+original_report:
 {original_report}
 
-优化要求：
+optimize_requirement:
 {request.optimize_requirement}
 
-模型提供方：{request.model_provider}
+model_provider: {request.model_provider}
 
-JSON 字段必须为：
-- optimized_report: 字符串，优化后的完整 Markdown 报告
-- change_summary: 字符串，概括本次修改内容
-
-不要使用 Markdown 代码围栏包裹 JSON。
+Required JSON fields:
+- optimized_report: string
+- change_summary: string
 """
 
-    payload = _parse_json_object(llm_client.chat(prompt, SYSTEM_PROMPT))
-    optimized_report = _append_safety_notice(_required_text(payload, "optimized_report"))
+    with workflow_step(workflow_name, "llm_call", request_id=request_id):
+        payload = _parse_json_object(llm_client.chat(prompt, SYSTEM_PROMPT, request_id=request_id))
+    with workflow_step(workflow_name, "report_generation", request_id=request_id):
+        optimized_report = _append_safety_notice(_required_text(payload, "optimized_report"))
+    with workflow_step(workflow_name, "change_summary", request_id=request_id):
+        change_summary = _required_text(payload, "change_summary")
 
     return OptimizeResponse(
         optimized_report=optimized_report,
-        change_summary=_required_text(payload, "change_summary"),
+        change_summary=change_summary,
         safety_notice=SAFETY_NOTICE,
     )

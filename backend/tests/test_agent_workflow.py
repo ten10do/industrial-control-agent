@@ -1,20 +1,25 @@
+import pytest
+
 from backend.agent_core import generate_control_plan, optimize_control_plan
+from backend.errors import LLMResponseFormatError, SkillExecutionError
 from backend.llm_client import FakeLLMClient
 from backend.schemas import GenerateRequest, OptimizeRequest
 
 
-SAFETY_NOTICE_FRAGMENT = "专业工程师复核"
+SAFETY_NOTICE_FRAGMENT = "qualified engineer"
+
+
+def _generate_request() -> GenerateRequest:
+    return GenerateRequest(
+        control_object="Water tank",
+        input_devices="High level sensor, low level sensor, start button, stop button",
+        output_devices="Pump, run lamp, alarm lamp",
+        control_requirements="Start pump at low level, stop at high level, alarm on sensor fault.",
+    )
 
 
 def test_generate_control_plan_returns_stable_fields() -> None:
-    request = GenerateRequest(
-        control_object="水塔水位控制系统",
-        input_devices="高液位传感器、低液位传感器、启动按钮、停止按钮",
-        output_devices="水泵、运行指示灯、故障报警灯",
-        control_requirements="低液位启动水泵，高液位停止水泵，传感器异常时报警。",
-    )
-
-    response = generate_control_plan(request, FakeLLMClient())
+    response = generate_control_plan(_generate_request(), FakeLLMClient())
 
     assert set(response.model_dump()) == {
         "requirement_analysis",
@@ -34,8 +39,8 @@ def test_generate_control_plan_returns_stable_fields() -> None:
 
 def test_optimize_control_plan_returns_stable_fields() -> None:
     request = OptimizeRequest(
-        original_report="# 原始方案\n\n使用液位信号控制水泵启停。",
-        optimize_requirement="补充传感器故障保护和调试步骤。",
+        original_report="# Original plan\n\nUse level signals to control pump start and stop.",
+        optimize_requirement="Add sensor fault protection and commissioning steps.",
     )
 
     response = optimize_control_plan(request, FakeLLMClient())
@@ -49,3 +54,21 @@ def test_optimize_control_plan_returns_stable_fields() -> None:
     assert response.change_summary.strip()
     assert SAFETY_NOTICE_FRAGMENT in response.safety_notice
     assert response.safety_notice in response.optimized_report
+
+
+def test_llm_returns_invalid_json() -> None:
+    class InvalidJsonLLM:
+        def chat(self, prompt: str, system_prompt: str | None = None, request_id: str | None = None) -> str:
+            return "not-json"
+
+    with pytest.raises(LLMResponseFormatError):
+        generate_control_plan(_generate_request(), InvalidJsonLLM())
+
+
+def test_intermediate_skill_exception() -> None:
+    class MissingFieldLLM:
+        def chat(self, prompt: str, system_prompt: str | None = None, request_id: str | None = None) -> str:
+            return '{"requirement_analysis": "ok", "io_table": []}'
+
+    with pytest.raises(SkillExecutionError):
+        generate_control_plan(_generate_request(), MissingFieldLLM())

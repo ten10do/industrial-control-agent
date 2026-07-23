@@ -30,6 +30,7 @@ function App() {
   const [result, setResult] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [errorRequestId, setErrorRequestId] = useState("");
 
   const selectedExample = useMemo(
     () => examples.find((example) => example.name === selectedExampleName) ?? null,
@@ -81,12 +82,14 @@ function App() {
     const { control_object, input_devices, output_devices, control_requirements } = selectedExample;
     setFormData({ control_object, input_devices, output_devices, control_requirements });
     setErrorMessage("");
+    setErrorRequestId("");
   }
 
   function clearForm() {
     setFormData(EMPTY_FORM);
     setResult(null);
     setErrorMessage("");
+    setErrorRequestId("");
   }
 
   async function handleGenerate(event) {
@@ -103,6 +106,7 @@ function App() {
 
     setIsLoading(true);
     setErrorMessage("");
+    setErrorRequestId("");
     try {
       const response = await generateControlPlan({
         ...formData,
@@ -111,6 +115,7 @@ function App() {
       setResult(response);
     } catch (error) {
       setErrorMessage(error.message || "控制方案生成失败，请稍后重试。");
+      setErrorRequestId(error.requestId || "");
     } finally {
       setIsLoading(false);
     }
@@ -160,7 +165,14 @@ function App() {
           />
 
           {errorMessage && (
-            <ErrorMessage message={errorMessage} onDismiss={() => setErrorMessage("")} />
+            <ErrorMessage
+              message={errorMessage}
+              requestId={errorRequestId}
+              onDismiss={() => {
+                setErrorMessage("");
+                setErrorRequestId("");
+              }}
+            />
           )}
 
           <ScenarioForm

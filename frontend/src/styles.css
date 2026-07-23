@@ -607,7 +607,14 @@ p {
 }
 
 .error-message span {
+  display: grid;
+  gap: 4px;
   flex: 1;
+}
+
+.error-message small {
+  color: #ffb8b8;
+  font-size: 12px;
 }
 
 .error-dismiss {
