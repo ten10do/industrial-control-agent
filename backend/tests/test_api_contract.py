@@ -1,3 +1,5 @@
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -6,7 +8,7 @@ from backend.main import app, get_llm_client
 
 
 LOCAL_FRONTEND_ORIGIN = "http://localhost:5173"
-SAFETY_NOTICE = "方案仅供课程设计和工程参考，实际工程需由专业工程师复核。"
+SAFETY_NOTICE_FRAGMENT = "qualified engineer"
 
 
 @pytest.fixture
@@ -23,6 +25,20 @@ def test_health_and_cors(client: TestClient) -> None:
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
     assert response.headers["access-control-allow-origin"] == LOCAL_FRONTEND_ORIGIN
+
+
+def test_auto_generates_request_id(client: TestClient) -> None:
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert re.fullmatch(r"[0-9a-f-]{36}", response.headers["x-request-id"])
+
+
+def test_uses_client_request_id(client: TestClient) -> None:
+    response = client.get("/health", headers={"X-Request-ID": "client-request-1"})
+
+    assert response.status_code == 200
+    assert response.headers["x-request-id"] == "client-request-1"
 
 
 def test_examples_match_frontend_fields(client: TestClient) -> None:
@@ -44,15 +60,16 @@ def test_generate_contract(client: TestClient) -> None:
     response = client.post(
         "/generate",
         json={
-            "control_object": "水塔及补水泵",
-            "input_devices": "高液位传感器、低液位传感器",
-            "output_devices": "补水泵、报警灯",
-            "control_requirements": "低液位启动，高液位停止。",
+            "control_object": "Water tank",
+            "input_devices": "High level sensor, low level sensor",
+            "output_devices": "Pump, alarm lamp",
+            "control_requirements": "Start at low level and stop at high level.",
             "model_provider": "DeepSeek",
         },
     )
 
     assert response.status_code == 200
+    assert response.headers["x-request-id"]
     payload = response.json()
     assert set(payload) == {
         "requirement_analysis",
@@ -71,15 +88,15 @@ def test_generate_contract(client: TestClient) -> None:
         "device",
         "description",
     }
-    assert payload["safety_notice"] == SAFETY_NOTICE
+    assert SAFETY_NOTICE_FRAGMENT in payload["safety_notice"]
 
 
 def test_optimize_contract(client: TestClient) -> None:
     response = client.post(
         "/optimize",
         json={
-            "original_report": "# 原始控制方案",
-            "optimize_requirement": "补充安全保护说明。",
+            "original_report": "# Original control plan",
+            "optimize_requirement": "Add safety protection notes.",
             "model_provider": "DeepSeek",
         },
     )
@@ -90,29 +107,43 @@ def test_optimize_contract(client: TestClient) -> None:
         "change_summary",
         "safety_notice",
     }
-    assert response.json()["safety_notice"] == SAFETY_NOTICE
+    assert SAFETY_NOTICE_FRAGMENT in response.json()["safety_notice"]
+
+
+def test_error_response_includes_request_id_header_and_body(client: TestClient) -> None:
+    response = client.post(
+        "/generate",
+        headers={"X-Request-ID": "api-error-1"},
+        json={"control_object": ""},
+    )
+
+    assert response.status_code == 422
+    assert response.headers["x-request-id"] == "api-error-1"
+    assert response.json()["request_id"] == "api-error-1"
 
 
 def test_unexpected_generate_error_is_sanitized(client: TestClient) -> None:
     class FailingLLMClient:
-        def chat(self, prompt: str, system_prompt: str | None = None) -> str:
+        def chat(self, prompt: str, system_prompt: str | None = None, request_id: str | None = None) -> str:
             raise RuntimeError("internal-configuration-detail")
 
     app.dependency_overrides[get_llm_client] = lambda: FailingLLMClient()
     response = client.post(
         "/generate",
+        headers={"X-Request-ID": "sanitize-1"},
         json={
-            "control_object": "测试对象",
-            "input_devices": "测试输入",
-            "output_devices": "测试输出",
-            "control_requirements": "测试要求",
+            "control_object": "Test object",
+            "input_devices": "Test input",
+            "output_devices": "Test output",
+            "control_requirements": "Test requirement",
             "model_provider": "DeepSeek",
         },
     )
 
     assert response.status_code == 502
-    assert response.json() == {
-        "message": "控制方案生成失败",
-        "detail": "服务内部错误",
-    }
+    payload = response.json()
+    assert payload["code"] == "API_SERVICE_ERROR"
+    assert payload["request_id"] == "sanitize-1"
     assert "internal-configuration-detail" not in response.text
+    assert "Traceback" not in response.text
+    assert "DEEPSEEK_API_KEY" not in response.text

@@ -1,6 +1,8 @@
 import json
 import os
-from typing import Optional, Protocol
+import time
+from collections.abc import Callable
+from typing import Any, Optional, Protocol
 
 from openai import (
     APIConnectionError,
@@ -12,9 +14,16 @@ from openai import (
     RateLimitError,
 )
 
+if __package__:
+    from .errors import LLMResponseFormatError, LLMTimeoutError
+    from .observability import get_request_id, log_workflow_event
+else:
+    from errors import LLMResponseFormatError, LLMTimeoutError
+    from observability import get_request_id, log_workflow_event
+
 
 class LLMClient(Protocol):
-    def chat(self, prompt: str, system_prompt: Optional[str] = None) -> str: ...
+    def chat(self, prompt: str, system_prompt: Optional[str] = None, request_id: Optional[str] = None) -> str: ...
 
 
 class LLMClientError(RuntimeError):
@@ -29,82 +38,121 @@ class DeepSeekLLMClient:
         model: str = "deepseek-chat",
         temperature: float = 0.2,
         timeout: float = 90.0,
+        max_retries: int = 2,
+        backoff_seconds: float = 0.25,
+        sleep_fn: Callable[[float], None] = time.sleep,
+        client: Any | None = None,
     ) -> None:
         resolved_key = api_key or os.getenv("DEEPSEEK_API_KEY")
-        if not resolved_key:
-            raise LLMClientError("模型服务未配置")
+        if not resolved_key and client is None:
+            raise LLMClientError("Model service is not configured")
 
         self.model = model
         self.temperature = temperature
-        self.client = OpenAI(api_key=resolved_key, base_url=base_url, timeout=timeout)
+        self.max_retries = max_retries
+        self.backoff_seconds = backoff_seconds
+        self.sleep_fn = sleep_fn
+        self.client = client or OpenAI(api_key=resolved_key, base_url=base_url, timeout=timeout)
 
-    def chat(self, prompt: str, system_prompt: Optional[str] = None) -> str:
+    def chat(self, prompt: str, system_prompt: Optional[str] = None, request_id: Optional[str] = None) -> str:
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=self.temperature,
-            )
-        except AuthenticationError as exc:
-            raise LLMClientError("模型服务认证失败") from exc
-        except APITimeoutError as exc:
-            raise LLMClientError("模型服务请求超时") from exc
-        except APIConnectionError as exc:
-            raise LLMClientError("无法连接模型服务") from exc
-        except RateLimitError as exc:
-            raise LLMClientError("模型服务请求过于频繁") from exc
-        except (APIError, OpenAIError) as exc:
-            raise LLMClientError("模型服务调用失败") from exc
-        except Exception as exc:
-            raise LLMClientError("模型服务调用失败") from exc
+        retry_count = 0
+        response = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    temperature=self.temperature,
+                )
+                break
+            except AuthenticationError as exc:
+                raise LLMClientError("Model service authentication failed") from exc
+            except APITimeoutError as exc:
+                if attempt >= self.max_retries:
+                    self._log_retry("error", retry_count, "APITimeoutError", request_id)
+                    raise LLMTimeoutError() from exc
+                retry_count += 1
+                self._log_retry("retry", retry_count, "APITimeoutError", request_id)
+                self.sleep_fn(self.backoff_seconds * (2**attempt))
+            except (APIConnectionError, RateLimitError) as exc:
+                if attempt >= self.max_retries:
+                    self._log_retry("error", retry_count, type(exc).__name__, request_id)
+                    raise LLMClientError("Model service call failed") from exc
+                retry_count += 1
+                self._log_retry("retry", retry_count, type(exc).__name__, request_id)
+                self.sleep_fn(self.backoff_seconds * (2**attempt))
+            except APIError as exc:
+                status_code = getattr(exc, "status_code", None)
+                if status_code is not None and status_code < 500:
+                    raise LLMClientError("Model service call failed") from exc
+                if attempt >= self.max_retries:
+                    self._log_retry("error", retry_count, "APIError", request_id)
+                    raise LLMClientError("Model service call failed") from exc
+                retry_count += 1
+                self._log_retry("retry", retry_count, "APIError", request_id)
+                self.sleep_fn(self.backoff_seconds * (2**attempt))
+            except OpenAIError as exc:
+                raise LLMClientError("Model service call failed") from exc
+            except Exception as exc:
+                raise LLMClientError("Model service call failed") from exc
 
-        content = response.choices[0].message.content or ""
-        if not content.strip():
-            raise LLMClientError("模型服务返回内容为空")
+        content = response.choices[0].message.content if response else ""
+        if not content or not content.strip():
+            raise LLMResponseFormatError()
         return content
+
+    def _log_retry(self, status: str, retry_count: int, error_type: str, request_id: Optional[str]) -> None:
+        log_workflow_event(
+            request_id=request_id or get_request_id(),
+            workflow_name="llm_client",
+            step_name="chat_completion",
+            status=status,
+            retry_count=retry_count,
+            error_type=error_type,
+        )
 
 
 class FakeLLMClient:
     """Deterministic local client used by tests; it never performs network I/O."""
 
-    def chat(self, prompt: str, system_prompt: Optional[str] = None) -> str:
+    def chat(self, prompt: str, system_prompt: Optional[str] = None, request_id: Optional[str] = None) -> str:
         if "TASK:OPTIMIZE_CONTROL_PLAN" in prompt:
             return json.dumps(
                 {
-                    "optimized_report": "# 优化后的控制方案\n\n已补充故障保护和调试步骤。",
-                    "change_summary": "补充传感器异常保护、报警逻辑和调试检查项。",
+                    "optimized_report": "# Optimized control plan\n\nFault protection and commissioning checks were added.",
+                    "change_summary": "Added sensor fault protection, alarm logic, and commissioning checks.",
                 },
                 ensure_ascii=False,
             )
 
         return json.dumps(
             {
-                "requirement_analysis": "系统根据输入信号控制执行设备，并覆盖正常和异常工况。",
+                "requirement_analysis": "The system controls actuators from input signals and covers normal and abnormal states.",
                 "io_table": [
                     {
                         "address": "I0.0",
-                        "signal_name": "启动信号",
+                        "signal_name": "Start signal",
                         "signal_type": "DI",
-                        "device": "启动按钮",
-                        "description": "请求系统启动",
+                        "device": "Start button",
+                        "description": "Requests system startup",
                     },
                     {
                         "address": "Q0.0",
-                        "signal_name": "设备运行输出",
+                        "signal_name": "Run output",
                         "signal_type": "DO",
-                        "device": "执行设备",
-                        "description": "驱动主执行设备",
+                        "device": "Actuator",
+                        "description": "Drives the primary actuator",
                     },
                 ],
-                "control_logic": "满足启动和安全条件时置位运行输出，停止条件有效时复位。",
-                "safety_design": "急停、故障或信号异常时立即停止输出并保持报警。",
-                "ladder_idea": "按输入处理、启停保持、安全联锁、输出和报警划分梯形图网络。",
-                "report_markdown": "# 工业控制方案\n\n## 控制说明\n\n系统按控制要求执行。",
+                "control_logic": "Set the run output when start and safety conditions are satisfied; reset when stop conditions are active.",
+                "safety_design": "Stop outputs and keep alarm state active on emergency stop, fault, or abnormal signals.",
+                "ladder_idea": "Divide ladder networks into input processing, start-stop latch, safety interlock, output, and alarm logic.",
+                "report_markdown": "# Industrial control plan\n\n## Control description\n\nThe system executes according to the control requirements.",
             },
             ensure_ascii=False,
         )

@@ -1,11 +1,14 @@
 import { AlertTriangle, X } from "lucide-react";
 
 
-function ErrorMessage({ message, onDismiss }) {
+function ErrorMessage({ message, requestId = "", onDismiss }) {
   return (
     <div className="error-message" role="alert">
       <AlertTriangle size={19} aria-hidden="true" />
-      <span>{message}</span>
+      <span>
+        {message}
+        {requestId && <small>Request ID: {requestId}</small>}
+      </span>
       <button
         type="button"
         className="icon-button error-dismiss"

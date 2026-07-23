@@ -5,10 +5,11 @@ export const API_BASE_URL = (configuredBaseUrl || developmentBaseUrl).replace(/\
 
 
 class ApiRequestError extends Error {
-  constructor(message, status = null) {
+  constructor(message, status = null, requestId = "") {
     super(message);
     this.name = "ApiRequestError";
     this.status = status;
+    this.requestId = requestId;
   }
 }
 
@@ -43,7 +44,18 @@ async function request(path, options = {}) {
     });
 
     if (!response.ok) {
-      throw new ApiRequestError(errorMessageForStatus(response.status), response.status);
+      let payload = null;
+      try {
+        payload = await response.json();
+      } catch {
+        payload = null;
+      }
+      const requestId = payload?.request_id || response.headers.get("X-Request-ID") || "";
+      throw new ApiRequestError(
+        payload?.message || errorMessageForStatus(response.status),
+        response.status,
+        requestId,
+      );
     }
 
     return await response.json();
