@@ -1,10 +1,11 @@
 # 基于大模型的工业控制方案设计 Agent 平台
 
-一个面向自动化控制系统方案设计场景的 AI Agent 项目。系统采用 React + FastAPI 前后端分离架构，前端负责控制任务输入和结果展示，后端负责接口协议、Agent Workflow 编排和 DeepSeek API 调用封装。
+一个面向工业自动化控制方案设计场景的 AI Agent 项目。系统采用 React + FastAPI 前后端分离架构，前端负责控制任务输入和结果展示，后端负责接口协议、Agent Workflow 编排、链路观测和 DeepSeek API 调用封装。
 
 ## 在线体验
 
 - 前端在线地址：[https://industrial-control-agent.netlify.app](https://industrial-control-agent.netlify.app/)
+- 后端服务基地址：[https://industrial-control-agent-backend.onrender.com](https://industrial-control-agent-backend.onrender.com)
 - 后端 API 文档：[https://industrial-control-agent-backend.onrender.com/docs](https://industrial-control-agent-backend.onrender.com/docs)
 - 后端健康检查：[https://industrial-control-agent-backend.onrender.com/health](https://industrial-control-agent-backend.onrender.com/health)
 
@@ -12,16 +13,16 @@
 
 ## 项目简介
 
-本项目面向自动化控制系统方案设计场景。用户输入控制对象、输入设备、输出设备和控制要求后，系统通过 FastAPI 后端调用大模型，生成结构化的工业控制方案内容：
+本项目面向工业自动化控制方案设计场景。用户输入控制对象、输入设备、输出设备和控制要求后，系统通过 FastAPI 后端执行 Agent Workflow，生成结构化的工业控制方案：
 
 - 控制需求分析
 - PLC I/O 点表
 - 控制逻辑
-- 安全保护与报警建议
+- 安全联锁与报警建议
 - PLC 梯形图设计思路
 - Markdown 方案报告
 
-项目重点展示 AI Agent 在工业控制方案设计辅助场景中的应用实现，包括 React 前端组件化开发、FastAPI RESTful API、Pydantic 协议建模、DeepSeek API 接入、Agent Workflow 编排和前后端分离部署。
+项目重点展示 AI Agent 在工业控制方案设计辅助场景中的应用实现，包括 React 前端组件化开发、FastAPI RESTful API、Pydantic 协议建模、Prompt Engineering、DeepSeek API 接入、Agent Workflow 编排、请求链路观测和前后端分离部署。
 
 ## 技术栈
 
@@ -32,25 +33,28 @@
 - JavaScript
 - HTML
 - CSS
-- Axios / API 请求封装
+- Fetch API / API 请求封装
+- React Markdown
 
 后端：
 
 - FastAPI
-- Python
+- Python 3.11
 - Pydantic
-- OpenAI-compatible API
+- OpenAI Python SDK
 - DeepSeek API
+- Prompt Engineering
 
 工程与部署：
 
 - Git / GitHub
-- Render
-- Netlify
-- 环境变量管理
-- CORS
 - pytest
 - Fake LLM 测试替身
+- GitHub Actions
+- CORS
+- 环境变量管理
+- Render
+- Netlify
 
 ## 系统架构
 
@@ -92,11 +96,64 @@ DeepSeek API
 - 工业控制方案生成
 - PLC I/O 点表生成
 - 控制逻辑生成
-- 安全保护与报警建议
+- 安全联锁与报警建议
 - 梯形图设计思路输出
 - Markdown 报告生成与复制
 - 后端连接状态显示
-- 基础响应式适配
+- 方案优化 API
+- 友好错误提示与 Request ID 展示
+
+## Agent Workflow
+
+控制方案生成链路如下：
+
+```text
+POST /generate
+  → 生成或透传 X-Request-ID
+  → Pydantic 请求校验
+  → 构造工业控制 Prompt
+  → 调用模型并解析严格 JSON
+  → 校验需求分析
+  → 校验 PLC I/O 点表
+  → 校验控制逻辑、安全设计和梯形图思路
+  → 汇总 Markdown 方案报告
+  → 返回结构化响应
+```
+
+生成流程通过一次模型调用取得完整结构化结果，再由后端逐步解析、校验和组装。`/optimize` 使用相同的请求追踪与错误处理机制，对已有 Markdown 方案执行优化并返回变更摘要。每个 Workflow 步骤都会记录成功或失败状态及执行耗时。
+
+## 链路稳定性与测试
+
+### 请求追踪与日志
+
+- 客户端传入 `X-Request-ID` 时直接透传；未传入时自动生成 UUID。
+- `request_id` 贯穿 API、Agent Workflow、LLM 重试日志和错误响应，响应头同时返回 `X-Request-ID`。
+- Workflow 使用 JSON 结构化日志记录 `request_id`、`workflow_name`、`step_name`、`status`、`duration_ms`、`retry_count` 和 `error_type`。
+- 每个 Workflow 步骤记录执行耗时，便于定位慢步骤和失败位置。
+
+### 超时、重试与错误处理
+
+- 模型调用默认超时为 90 秒。
+- 超时、连接错误、限流和服务端临时错误最多重试 2 次，并采用简单指数退避。
+- 后端统一使用 `SkillExecutionError`、`LLMTimeoutError`、`LLMResponseFormatError` 和 `WorkflowExecutionError` 表达可预期的链路异常。
+- API 返回稳定、脱敏的错误结构；前端按错误类型显示友好提示，并在可用时展示 Request ID。
+
+### 自动化回归
+
+后端测试使用 Fake LLM 和 Mock 覆盖正常 Workflow、API 协议、请求标识、错误清洗、模型超时、有限重试和响应格式异常，不会发起真实模型调用。
+
+| 验证项 | 命令 | 当前结果 |
+| --- | --- | --- |
+| 后端回归测试 | `python -m pytest backend\tests -q` | 17 passed |
+| 前端生产构建 | `npm.cmd run build` | 通过 |
+
+GitHub Actions CI 在以下场景自动触发：
+
+- push 到 `main`
+- 创建或更新面向 `main` 的 Pull Request
+- 手动运行 `workflow_dispatch`
+
+CI 的 `Backend Tests` 任务执行 Python 语法检查和 pytest 后端回归测试；`Frontend Build` 任务执行 `npm ci` 和 Vite 生产构建。
 
 ## 项目亮点
 
@@ -106,12 +163,13 @@ DeepSeek API
 4. Agent Workflow：围绕工业控制方案生成流程组织需求分析、I/O 点表、控制逻辑、安全保护、梯形图思路和报告汇总。
 5. DeepSeek API 接入：使用 OpenAI-compatible API 封装大模型调用。
 6. PLC I/O 点表结构化输出：支持地址、信号名称、信号类型、设备和描述等字段展示。
-7. 错误处理：后端统一处理接口异常，前端展示清晰的请求状态和错误提示。
-8. Fake LLM 测试替身：用于接口响应字段和前端展示流程的回归测试。
-9. 前后端分离部署：前端部署到 Netlify，后端部署到 Render。
-10. 环境变量管理：后端管理模型 API Key，前端通过环境变量配置后端地址。
+7. 链路可观测性：使用 Request ID、结构化日志和步骤耗时串联 API、Workflow 与错误响应。
+8. 弹性模型调用：配置超时、有限重试和指数退避，并统一清洗异常信息。
+9. Fake LLM 测试替身：用于 Workflow、接口协议和异常链路的自动化回归。
+10. GitHub Actions CI：自动执行后端语法检查、pytest、前端依赖安装和生产构建。
+11. 前后端分离部署：前端部署到 Netlify，后端部署到 Render。
 
-## 接口说明
+## API 接口
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
@@ -140,7 +198,7 @@ http://localhost:8000
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
@@ -150,7 +208,7 @@ npm run dev
 http://localhost:5173
 ```
 
-### 环境变量
+## 环境变量
 
 后端：
 
@@ -161,7 +219,7 @@ http://localhost:5173
 
 - `VITE_API_BASE_URL`：FastAPI 后端地址，例如本地 `http://localhost:8000` 或线上 Render 地址。
 
-## 部署说明
+## 在线部署
 
 ### 后端 Render
 
@@ -183,7 +241,7 @@ http://localhost:5173
 
 当前线上前端部署在 Netlify Free，后端部署在 Render Free。
 
-## 截图展示
+## 项目截图
 
 ### 首页与状态面板
 
@@ -220,11 +278,3 @@ http://localhost:5173
 展示 390px 左右宽度下的响应式页面布局。
 
 ![移动端布局](screenshots/06_mobile_layout.png)
-
-## 链路稳定性与测试
-
-- 后端为每次请求生成或透传 `X-Request-ID`，并在错误响应中返回 `request_id`，便于前后端排查同一次调用。
-- Agent Workflow 使用结构化日志记录关键步骤，包括 `request_id`、`workflow_name`、`step_name`、`status`、`duration_ms`、`retry_count` 和 `error_type`。
-- 后端统一封装 `SkillExecutionError`、`LLMTimeoutError`、`LLMResponseFormatError` 和 `WorkflowExecutionError`，向前端返回稳定的错误代码与友好消息。
-- LLM Client 设置明确超时，并对临时网络错误、连接错误和服务端临时错误进行最多 2 次有限重试。
-- 自动化测试使用 Fake LLM / Mock 覆盖正常 workflow、request_id、错误清洗、超时、重试和响应格式异常，回归命令为 `python -m pytest backend\tests -v`。
