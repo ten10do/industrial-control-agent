@@ -2,6 +2,11 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+if __package__:
+    from .validation.models import ValidationReport
+else:
+    from validation.models import ValidationReport
+
 
 class RequestModel(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
@@ -25,12 +30,13 @@ class IOPoint(BaseModel):
 
 class GenerateResponse(BaseModel):
     requirement_analysis: str
-    io_table: list[IOPoint] = Field(min_length=1)
+    io_table: list[IOPoint]
     control_logic: str
     safety_design: str
     ladder_idea: str
     report_markdown: str
     safety_notice: str
+    validation_report: Optional[ValidationReport] = None
 
 
 class OptimizeRequest(RequestModel):
@@ -43,6 +49,7 @@ class OptimizeResponse(BaseModel):
     optimized_report: str
     change_summary: str
     safety_notice: str
+    validation_report: Optional[ValidationReport] = None
 
 
 class ErrorResponse(BaseModel):

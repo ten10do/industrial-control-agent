@@ -9,6 +9,7 @@ import ResultTabs from "./components/ResultTabs";
 import ScenarioForm from "./components/ScenarioForm";
 import Sidebar from "./components/Sidebar";
 import StatusPanel from "./components/StatusPanel";
+import ValidationPanel from "./components/ValidationPanel";
 
 
 const EMPTY_FORM = {
@@ -104,6 +105,7 @@ function App() {
       return;
     }
 
+    setResult(null);
     setIsLoading(true);
     setErrorMessage("");
     setErrorRequestId("");
@@ -185,7 +187,16 @@ function App() {
             isLoading={isLoading}
           />
 
-          {isLoading ? <LoadingState /> : <ResultTabs result={result} />}
+          {isLoading ? (
+            <LoadingState />
+          ) : (
+            <>
+              {result?.validation_report && (
+                <ValidationPanel report={result.validation_report} />
+              )}
+              <ResultTabs result={result} />
+            </>
+          )}
         </main>
       </div>
     </div>

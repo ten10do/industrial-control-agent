@@ -1084,6 +1084,310 @@ p {
   flex: 0 0 auto;
 }
 
+.validation-panel {
+  min-width: 0;
+  margin-top: 16px;
+  padding: 22px;
+}
+
+.validation-heading {
+  margin-bottom: 16px;
+}
+
+.validation-risk-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 0 10px;
+  color: var(--red);
+  font-size: 12px;
+  font-weight: 900;
+  background: rgba(255, 107, 107, 0.1);
+  border: 1px solid rgba(255, 107, 107, 0.38);
+  border-radius: 4px;
+}
+
+.validation-risk-badge.success {
+  color: var(--green);
+  background: rgba(52, 211, 153, 0.1);
+  border-color: rgba(52, 211, 153, 0.38);
+}
+
+.validation-risk-badge.warning {
+  color: var(--amber);
+  background: rgba(246, 196, 83, 0.1);
+  border-color: rgba(246, 196, 83, 0.38);
+}
+
+.validation-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.validation-metric {
+  min-width: 0;
+  padding: 11px 12px;
+  background: rgba(12, 32, 52, 0.88);
+  border: 1px solid rgba(125, 177, 221, 0.18);
+  border-radius: 6px;
+}
+
+.validation-metric span,
+.validation-metric strong {
+  display: block;
+}
+
+.validation-metric span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.validation-metric strong {
+  margin-top: 4px;
+  color: var(--text);
+  font-size: 17px;
+}
+
+.validation-metric.success strong {
+  color: var(--green);
+}
+
+.validation-metric.warning strong {
+  color: var(--amber);
+}
+
+.validation-metric.danger strong {
+  color: var(--red);
+}
+
+.validation-controls {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 12px;
+  background: rgba(8, 24, 39, 0.68);
+  border: 1px solid rgba(125, 177, 221, 0.18);
+  border-radius: 6px;
+}
+
+.validation-controls label:not(.validation-checkbox) {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.validation-controls select {
+  min-width: 150px;
+  height: 36px;
+  padding: 0 9px;
+  color: var(--text);
+  background: #081827;
+  border: 1px solid rgba(125, 177, 221, 0.38);
+  border-radius: 5px;
+}
+
+.validation-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  color: #b8cbe0;
+  font-size: 12px;
+}
+
+.validation-checkbox input {
+  accent-color: var(--cyan);
+}
+
+.validation-empty {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 13px;
+  color: #ffe6a3;
+  background: rgba(72, 50, 13, 0.52);
+  border: 1px solid rgba(246, 196, 83, 0.32);
+  border-radius: 6px;
+}
+
+.validation-empty.success {
+  color: #b9f6df;
+  background: rgba(19, 78, 63, 0.42);
+  border-color: rgba(52, 211, 153, 0.32);
+}
+
+.validation-empty strong,
+.validation-empty span {
+  display: block;
+}
+
+.validation-empty span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.validation-rule-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.validation-rule {
+  padding: 14px;
+  background: rgba(9, 24, 40, 0.7);
+  border: 1px solid rgba(125, 177, 221, 0.2);
+  border-left: 4px solid var(--muted);
+  border-radius: 6px;
+}
+
+.validation-rule.severity-critical {
+  border-left-color: var(--red);
+}
+
+.validation-rule.severity-high,
+.validation-rule.severity-medium {
+  border-left-color: var(--amber);
+}
+
+.validation-rule.severity-low {
+  border-left-color: var(--green);
+}
+
+.validation-rule.severity-info {
+  border-left-color: var(--cyan);
+}
+
+.validation-rule-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.validation-rule-heading strong,
+.validation-rule-heading code {
+  display: block;
+}
+
+.validation-rule-heading strong {
+  color: #f0f8ff;
+  font-size: 14px;
+}
+
+.validation-rule-heading code {
+  margin-top: 4px;
+  color: var(--cyan);
+  font-size: 11px;
+}
+
+.validation-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.severity-badge,
+.status-badge {
+  padding: 3px 7px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  background: rgba(125, 177, 221, 0.08);
+  border: 1px solid rgba(125, 177, 221, 0.22);
+  border-radius: 4px;
+}
+
+.severity-badge.critical,
+.status-badge.failed {
+  color: var(--red);
+  border-color: rgba(255, 107, 107, 0.38);
+}
+
+.severity-badge.high,
+.severity-badge.medium,
+.status-badge.warning {
+  color: var(--amber);
+  border-color: rgba(246, 196, 83, 0.38);
+}
+
+.severity-badge.low,
+.status-badge.passed {
+  color: var(--green);
+  border-color: rgba(52, 211, 153, 0.38);
+}
+
+.severity-badge.info {
+  color: var(--cyan);
+  border-color: rgba(68, 215, 255, 0.38);
+}
+
+.validation-rule-details {
+  display: grid;
+  gap: 9px;
+  margin: 13px 0 0;
+}
+
+.validation-rule-details div {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.validation-rule-details dt {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.validation-rule-details dd {
+  margin: 0;
+  color: #d9e8f8;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.validation-related {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.validation-related > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.validation-related > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.validation-related code {
+  padding: 3px 7px;
+  color: #8feaff;
+  background: rgba(68, 215, 255, 0.1);
+  border-radius: 3px;
+}
+
+.validation-request-id {
+  display: block;
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 @media (max-width: 1040px) {
   .industrial-header {
     position: static;
@@ -1125,6 +1429,10 @@ p {
   }
 
   .status-panel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .validation-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -1205,19 +1513,38 @@ p {
   }
 
   .status-panel,
-  .form-grid {
+  .form-grid,
+  .validation-summary {
     grid-template-columns: 1fr;
   }
 
   .form-panel,
+  .validation-panel,
   .tab-content {
     padding: 17px;
   }
 
   .panel-heading,
-  .report-toolbar {
+  .report-toolbar,
+  .validation-controls,
+  .validation-rule-heading {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .validation-controls,
+  .validation-controls label,
+  .validation-controls select {
+    width: 100%;
+  }
+
+  .validation-badges {
+    justify-content: flex-start;
+  }
+
+  .validation-rule-details div {
+    grid-template-columns: 1fr;
+    gap: 3px;
   }
 
   .form-actions {

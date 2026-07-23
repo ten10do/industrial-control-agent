@@ -29,12 +29,15 @@ def test_generate_control_plan_returns_stable_fields() -> None:
         "ladder_idea",
         "report_markdown",
         "safety_notice",
+        "validation_report",
     }
     assert isinstance(response.io_table, list)
     assert response.io_table
     assert response.report_markdown.strip()
     assert SAFETY_NOTICE_FRAGMENT in response.safety_notice
     assert response.safety_notice in response.report_markdown
+    assert response.validation_report is not None
+    assert response.validation_report.total_rules == 14
 
 
 def test_optimize_control_plan_returns_stable_fields() -> None:
@@ -49,11 +52,14 @@ def test_optimize_control_plan_returns_stable_fields() -> None:
         "optimized_report",
         "change_summary",
         "safety_notice",
+        "validation_report",
     }
     assert response.optimized_report.strip()
     assert response.change_summary.strip()
     assert SAFETY_NOTICE_FRAGMENT in response.safety_notice
     assert response.safety_notice in response.optimized_report
+    assert response.validation_report is not None
+    assert response.validation_report.total_rules == 14
 
 
 def test_llm_returns_invalid_json() -> None:

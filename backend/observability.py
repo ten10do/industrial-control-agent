@@ -40,6 +40,28 @@ def log_workflow_event(
     logger.info(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
 
 
+def log_validation_event(
+    *,
+    rule_id: str,
+    category: str,
+    status: str,
+    severity: str,
+    duration_ms: float = 0.0,
+    error_type: str | None = None,
+    request_id: str | None = None,
+) -> None:
+    payload = {
+        "request_id": request_id or get_request_id(),
+        "rule_id": rule_id,
+        "category": category,
+        "status": status,
+        "severity": severity,
+        "duration_ms": round(duration_ms, 2),
+        "error_type": error_type,
+    }
+    logger.info(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+
+
 @contextmanager
 def workflow_step(
     workflow_name: str,
