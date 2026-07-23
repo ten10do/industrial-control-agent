@@ -91,7 +91,7 @@ _OWNER_DETAIL_CONNECTOR_RE = re.compile(
     r"|^(?:the)?(?:main|auxiliary)?contactor(?:auxiliarycontact)?s?$"
 )
 _NEGATION_BEFORE_RE = re.compile(
-    r"(?:未(?:设置|配置|定义|提供|包含|使用|检测到)?|没有|无|缺少|无法|不(?:能|会|可|含|具备)?|"
+    r"(?:未(?:设置|配置|定义|提供|包含|使用|检测到)?|没有|无|缺少|无法|并非|不(?:能|会|可|含|具备)?|"
     r"\b(?:not|no|without|missing|lack(?:s|ing)?)\b)\s*(?:明确|任何|有效|可靠)?"
     r"(?:[\w\u3400-\u9fff-]+\s*){0,3}$"
 )
@@ -263,6 +263,47 @@ def matched_terms(text: str, terms: Sequence[str]) -> list[str]:
     return [term for term in terms if normalize_text(term) in normalized]
 
 
+def terms_follow_inline_condition(
+    text: str,
+    condition_terms: Sequence[str],
+    detail_terms: Sequence[str],
+    *,
+    window: int = 80,
+) -> bool:
+    """Link a Chinese condition ending in 时/后/则 to its inline result."""
+    for sentence in _sentences(text):
+        for clause in _evidence_clauses(sentence):
+            normalized_clause = normalize_text(clause)
+            for _, condition_end in _affirmed_spans_in_clause(
+                clause,
+                condition_terms,
+            ):
+                suffix = normalized_clause[condition_end:]
+                boundary = re.match(r"^\s*(?:时|后|则)\s*", suffix)
+                if not boundary:
+                    continue
+                condition_clause = normalized_clause[
+                    : condition_end + boundary.end()
+                ]
+                if not _looks_like_condition(
+                    condition_clause,
+                    (condition_terms,),
+                ):
+                    continue
+                result_clause = suffix[boundary.end():]
+                if (
+                    len(normalize_text(condition_clause))
+                    + len(normalize_text(result_clause))
+                    <= window
+                    and _affirmed_positions_in_clause(
+                        result_clause,
+                        detail_terms,
+                    )
+                ):
+                    return True
+    return False
+
+
 def terms_near(
     text: str,
     left_terms: Sequence[str],
@@ -278,6 +319,11 @@ def terms_near(
     ) or terms_follow_condition(
         text,
         (left_terms,),
+        right_terms,
+        window=window,
+    ) or terms_follow_inline_condition(
+        text,
+        left_terms,
         right_terms,
         window=window,
     )
@@ -319,6 +365,7 @@ def _looks_like_condition(
         return False
     chinese_condition = (
         normalized.endswith("之间")
+        or normalized.endswith("则")
         or (
             normalized.endswith("时")
             and not normalized.endswith(("超时", "计时"))
@@ -702,15 +749,23 @@ EMERGENCY_TRIGGER_TERMS = (
 CUT_OUTPUT_TERMS = (
     "断开输出",
     "切断输出",
+    "断开危险输出",
+    "断开所有危险输出",
+    "切断危险输出",
+    "切断所有危险输出",
     "立即停止",
     "失电",
     "断电",
     "de-energize",
     "disconnect output",
+    "disconnect hazardous outputs",
+    "de-energize hazardous outputs",
     "stop all",
 )
+IMMEDIATE_ACTION_TERMS = ("立即", "即刻", "immediately", "at once")
 PRIORITY_TERMS = ("最高优先级", "优先于", "急停优先", "highest priority", "overrides")
 RESET_TERMS = ("人工复位", "手动复位", "复位后", "reset", "manual reset")
+RESTART_TERMS = ("重新启动", "再次启动", "重新起动", "restart", "start again")
 OVERLOAD_TERMS = ("过载", "热继电器", "电机保护器", "overload", "thermal relay")
 OVERLOAD_EVENT_TERMS = ("过载", "overload")
 OVERLOAD_PROTECTION_TERMS = (
@@ -749,9 +804,35 @@ FEEDBACK_TERMS = (
 )
 LOW_LEVEL_TERMS = ("低液位", "液位过低", "缺水", "无水", "low level", "water shortage", "no water")
 DRY_RUN_TERMS = ("防干转", "干转保护", "空转保护", "dry run", "dry-running")
+START_INHIBIT_TERMS = (
+    "禁止启动",
+    "禁止水泵启动",
+    "禁止泵启动",
+    "不允许启动",
+    "启动闭锁",
+    "启动禁止",
+    "inhibit start",
+    "start inhibited",
+    "prevent pump start",
+)
 TIMER_TERMS = ("计时", "定时器", "计时器", "timer", "timing")
 TIMEOUT_TERMS = ("超时", "到位超时", "动作超时", "timeout")
-TIMEOUT_EVENT_TERMS = ("到位超时", "动作超时", "timeout", "timed out")
+DEADLINE_NOT_REACHED_TERMS = (
+    "限定时间内未到位",
+    "规定时间内未到位",
+    "设定时间内未到位",
+    "未在限定时间内到位",
+    "未在规定时间内到位",
+    "未在设定时间内到位",
+    "fails to reach position within",
+    "not reached within the specified time",
+)
+TIMEOUT_EVENT_TERMS = (
+    "到位超时",
+    "动作超时",
+    "timeout",
+    "timed out",
+) + DEADLINE_NOT_REACHED_TERMS
 AUTO_TERMS = ("自动模式", "自动运行", "auto mode", "automatic mode")
 MANUAL_TERMS = ("手动模式", "手动操作", "manual mode", "manual operation")
 MODE_SELECT_TERMS = ("模式切换", "模式选择", "选择开关", "mode selection", "mode switch")
@@ -861,6 +942,17 @@ GLOBAL_SAFE_OUTPUT_ACTION_TERMS = (
     "all important outputs enter a safe state",
     "stop all outputs",
     "all outputs de-energize",
+)
+SHARED_SAFE_OUTPUT_ACTION_TERMS = (
+    "均保持关闭",
+    "均保持停止",
+    "均关闭",
+    "均停止",
+    "全部保持关闭",
+    "全部保持停止",
+    "both remain off",
+    "all remain off",
+    "all remain stopped",
 )
 SAFE_OUTPUT_DEVICE_GROUPS = (
     (
@@ -1068,6 +1160,9 @@ EXCLUSIVE_ACTION_PAIRS = (
     ("前进/后退", ("前进", "forward travel"), ("后退", "reverse travel")),
     ("加热/紧急冷却", ("加热", "heating"), ("紧急冷却", "emergency cooling")),
 )
+EXCLUSIVE_ACTION_COMPOUND_TERMS = {
+    "正转/反转": ("正反转", "forward/reverse"),
+}
 
 
 def canonical_signal_type(value: str) -> str | None:
@@ -1127,7 +1222,11 @@ def applicable_exclusive_pairs(text: str) -> list[str]:
     return [
         label
         for label, left_terms, right_terms in EXCLUSIVE_ACTION_PAIRS
-        if contains_any(text, left_terms) and contains_any(text, right_terms)
+        if (
+            contains_any(text, left_terms)
+            and contains_any(text, right_terms)
+        )
+        or contains_any(text, EXCLUSIVE_ACTION_COMPOUND_TERMS.get(label, ()))
     ]
 
 

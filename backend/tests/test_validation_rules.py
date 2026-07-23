@@ -311,6 +311,176 @@ def test_negated_safe_state_does_not_pass() -> None:
     assert result.status == RuleStatus.FAILED
 
 
+def test_second_review_missing_protection_phrases_do_not_pass() -> None:
+    cases = (
+        ("EMERGENCY_STOP_MISSING", "电机控制", "未设置急停"),
+        (
+            "MOTOR_OVERLOAD_PROTECTION_MISSING",
+            "三相异步电机控制",
+            "没有过载保护",
+        ),
+        (
+            "MUTUAL_INTERLOCK_MISSING",
+            "电机正转和反转控制",
+            "缺少互锁",
+        ),
+        (
+            "PUMP_DRY_RUN_PROTECTION_MISSING",
+            "水箱低液位水泵控制",
+            "未配置低液位停泵",
+        ),
+        (
+            "ACTION_TIMEOUT_PROTECTION_MISSING",
+            "电动阀门控制",
+            "无动作超时报警",
+        ),
+        (
+            "SAFE_STATE_UNDEFINED",
+            "电机控制",
+            "尚未定义安全停机状态",
+        ),
+    )
+
+    for rule_id, scenario_text, plan_text in cases:
+        result = default_rule_result(
+            rule_id,
+            validation_context(
+                scenario_text=scenario_text,
+                plan_text=plan_text,
+            ),
+        )
+
+        assert result.status == RuleStatus.FAILED, rule_id
+
+
+def test_second_review_positive_protection_phrases_pass() -> None:
+    cases = (
+        (
+            "EMERGENCY_STOP_MISSING",
+            "电机控制",
+            "急停触发后立即切断所有危险输出，故障复位后方可重新启动",
+        ),
+        (
+            "MOTOR_OVERLOAD_PROTECTION_MISSING",
+            "三相异步电机控制",
+            "电机配置热继电器，过载后停机并报警",
+        ),
+        (
+            "MUTUAL_INTERLOCK_MISSING",
+            "电机正转和反转控制",
+            "正反转接触器采用电气和程序双重互锁",
+        ),
+        (
+            "PUMP_DRY_RUN_PROTECTION_MISSING",
+            "水箱低液位水泵控制",
+            "低液位时禁止水泵启动并执行缺水报警",
+        ),
+        (
+            "ACTION_TIMEOUT_PROTECTION_MISSING",
+            "电动阀门控制",
+            "阀门在限定时间内未到位时停止输出并报警",
+        ),
+        (
+            "SAFE_STATE_UNDEFINED",
+            "电机和加热器控制",
+            "故障状态下电机和加热器均保持关闭",
+        ),
+    )
+
+    for rule_id, scenario_text, plan_text in cases:
+        result = default_rule_result(
+            rule_id,
+            validation_context(
+                scenario_text=scenario_text,
+                plan_text=plan_text,
+            ),
+        )
+
+        assert result.status == RuleStatus.PASSED, rule_id
+
+
+def test_second_review_protection_phrase_variants_pass() -> None:
+    cases = (
+        (
+            "EMERGENCY_STOP_MISSING",
+            "电机控制",
+            "急停动作后即刻断开危险输出，手动复位后才能再次启动",
+        ),
+        (
+            "MUTUAL_INTERLOCK_MISSING",
+            "电机正转和反转控制",
+            "forward/reverse contactors use a hardware interlock",
+        ),
+        (
+            "PUMP_DRY_RUN_PROTECTION_MISSING",
+            "水箱低液位水泵控制",
+            "缺水时启动闭锁并报警",
+        ),
+        (
+            "ACTION_TIMEOUT_PROTECTION_MISSING",
+            "电动阀门控制",
+            "阀门未在规定时间内到位则停止并告警",
+        ),
+        (
+            "SAFE_STATE_UNDEFINED",
+            "电机和加热器控制",
+            "设备故障时电机和加热器全部保持停止",
+        ),
+    )
+
+    for rule_id, scenario_text, plan_text in cases:
+        result = default_rule_result(
+            rule_id,
+            validation_context(
+                scenario_text=scenario_text,
+                plan_text=plan_text,
+            ),
+        )
+
+        assert result.status == RuleStatus.PASSED, rule_id
+
+
+def test_second_review_equivalent_terms_still_respect_negation() -> None:
+    cases = (
+        (
+            "EMERGENCY_STOP_MISSING",
+            "电机控制",
+            "急停触发后不立即切断所有危险输出，复位后重新启动",
+        ),
+        (
+            "MUTUAL_INTERLOCK_MISSING",
+            "电机正转和反转控制",
+            "正反转未采用互锁",
+        ),
+        (
+            "PUMP_DRY_RUN_PROTECTION_MISSING",
+            "水箱低液位水泵控制",
+            "低液位时未设置启动闭锁但报警",
+        ),
+        (
+            "ACTION_TIMEOUT_PROTECTION_MISSING",
+            "电动阀门控制",
+            "阀门未在规定时间内到位时不停止输出且不报警",
+        ),
+        (
+            "SAFE_STATE_UNDEFINED",
+            "电机和加热器控制",
+            "故障状态下电机和加热器并非均保持关闭",
+        ),
+    )
+
+    for rule_id, scenario_text, plan_text in cases:
+        result = default_rule_result(
+            rule_id,
+            validation_context(
+                scenario_text=scenario_text,
+                plan_text=plan_text,
+            ),
+        )
+
+        assert result.status == RuleStatus.FAILED, rule_id
+
+
 def test_monitor_only_motor_makes_control_and_safety_rules_not_applicable() -> None:
     context = validation_context(
         scenario_text="仅监测电机状态，不控制电机",

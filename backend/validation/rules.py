@@ -7,9 +7,11 @@ from .catalog import (
     ALARM_TERMS,
     AUTO_TERMS,
     CUT_OUTPUT_TERMS,
+    DEADLINE_NOT_REACHED_TERMS,
     DRY_RUN_TERMS,
     EMERGENCY_STOP_TERMS,
     EMERGENCY_TRIGGER_TERMS,
+    EXCLUSIVE_ACTION_COMPOUND_TERMS,
     EXCLUSIVE_ACTION_PAIRS,
     FAULT_TERMS,
     FEEDBACK_ABNORMAL_TERMS,
@@ -18,6 +20,7 @@ from .catalog import (
     GENERIC_EXCLUSIVE_TERMS,
     GLOBAL_SAFE_OUTPUT_ACTION_TERMS,
     INTERLOCK_TERMS,
+    IMMEDIATE_ACTION_TERMS,
     LEVEL_ABNORMAL_TERMS,
     LOW_LEVEL_TERMS,
     MANUAL_AUTHORITY_TERMS,
@@ -33,15 +36,18 @@ from .catalog import (
     PRIORITY_TERMS,
     PUMP_TERMS,
     RESET_TERMS,
+    RESTART_TERMS,
     RUN_STATE_TERMS,
     RUN_STOP_ACTUATOR_TERMS,
     SAFE_OUTPUT_DEVICE_GROUPS,
     SAFE_OUTPUT_ACTION_TERMS,
+    SHARED_SAFE_OUTPUT_ACTION_TERMS,
     SAFE_STATE_TERMS,
     SENSOR_FAULT_TERMS,
     SENSOR_TERMS,
     SHUTDOWN_LOGIC_TERMS,
     START_TERMS,
+    START_INHIBIT_TERMS,
     STOP_TERMS,
     TIMEOUT_ACTUATOR_TERMS,
     TIMEOUT_EVENT_TERMS,
@@ -236,34 +242,53 @@ class EmergencyStopMissingRule(ValidationRule):
             return self.not_applicable("当前场景未识别到运动机构或危险执行器。")
         checks = {
             "急停输入": contains_any_affirmed(context.plan_text, EMERGENCY_STOP_TERMS),
-            "急停后输出断开": terms_cooccur(
-                context.plan_text,
-                EMERGENCY_STOP_TERMS,
-                CUT_OUTPUT_TERMS,
-            )
-            or terms_follow_trigger(
-                context.plan_text,
-                EMERGENCY_STOP_TERMS,
-                EMERGENCY_TRIGGER_TERMS,
-                CUT_OUTPUT_TERMS,
-            ),
-            "急停优先级": terms_cooccur(
-                context.plan_text,
-                EMERGENCY_STOP_TERMS,
-                PRIORITY_TERMS,
-            ),
-            "复位说明": terms_cooccur(
-                context.plan_text,
-                EMERGENCY_STOP_TERMS,
-                RESET_TERMS,
-            )
-            or terms_follow_trigger(
-                context.plan_text,
-                EMERGENCY_STOP_TERMS,
-                EMERGENCY_TRIGGER_TERMS,
-                RESET_TERMS,
-            ),
         }
+        emergency_cut = terms_cooccur(
+            context.plan_text,
+            EMERGENCY_STOP_TERMS,
+            CUT_OUTPUT_TERMS,
+        ) or terms_follow_trigger(
+            context.plan_text,
+            EMERGENCY_STOP_TERMS,
+            EMERGENCY_TRIGGER_TERMS,
+            CUT_OUTPUT_TERMS,
+        )
+        immediate_emergency_cut = emergency_cut and terms_cooccur(
+            context.plan_text,
+            EMERGENCY_STOP_TERMS,
+            IMMEDIATE_ACTION_TERMS,
+            CUT_OUTPUT_TERMS,
+        )
+        checks.update(
+            {
+                "急停后输出断开": emergency_cut,
+                "急停优先级": terms_cooccur(
+                    context.plan_text,
+                    EMERGENCY_STOP_TERMS,
+                    PRIORITY_TERMS,
+                )
+                or immediate_emergency_cut,
+                "复位说明": terms_cooccur(
+                    context.plan_text,
+                    EMERGENCY_STOP_TERMS,
+                    RESET_TERMS,
+                )
+                or terms_follow_trigger(
+                    context.plan_text,
+                    EMERGENCY_STOP_TERMS,
+                    EMERGENCY_TRIGGER_TERMS,
+                    RESET_TERMS,
+                )
+                or (
+                    emergency_cut
+                    and terms_cooccur(
+                        context.plan_text,
+                        RESET_TERMS,
+                        RESTART_TERMS,
+                    )
+                ),
+            }
+        )
         missing = [name for name, present in checks.items() if not present]
         if not missing:
             return self.passed("急停输入、输出切断、优先级和复位说明完整。")
@@ -337,6 +362,15 @@ class MutualInterlockMissingRule(ValidationRule):
                 context.plan_text,
                 (left_terms, right_terms),
                 INTERLOCK_TERMS,
+            )
+            compound_terms = EXCLUSIVE_ACTION_COMPOUND_TERMS.get(label, ())
+            covered = covered or (
+                bool(compound_terms)
+                and terms_cooccur(
+                    context.plan_text,
+                    compound_terms,
+                    INTERLOCK_TERMS,
+                )
             )
             if not covered:
                 uncovered.append(label)
@@ -460,8 +494,18 @@ class PumpDryRunProtectionMissingRule(ValidationRule):
             return self.not_applicable("当前场景不是包含水泵及液位条件的供液系统。")
         checks = {
             "低液位或缺水检测": contains_any_affirmed(context.plan_text, LOW_LEVEL_TERMS),
-            "防干转逻辑": contains_any_affirmed(context.plan_text, DRY_RUN_TERMS),
-            "缺水停泵": terms_near(context.plan_text, LOW_LEVEL_TERMS, STOP_TERMS),
+            "防干转逻辑": contains_any_affirmed(context.plan_text, DRY_RUN_TERMS)
+            or terms_near(
+                context.plan_text,
+                LOW_LEVEL_TERMS,
+                START_INHIBIT_TERMS,
+            ),
+            "缺水停泵": terms_near(context.plan_text, LOW_LEVEL_TERMS, STOP_TERMS)
+            or terms_near(
+                context.plan_text,
+                LOW_LEVEL_TERMS,
+                START_INHIBIT_TERMS,
+            ),
             "缺水报警": terms_near(context.plan_text, LOW_LEVEL_TERMS, ALARM_TERMS),
         }
         missing = [name for name, present in checks.items() if not present]
@@ -488,8 +532,16 @@ class ActionTimeoutProtectionMissingRule(ValidationRule):
         if not contains_any(context.scenario_text, TIMEOUT_ACTUATOR_TERMS):
             return self.not_applicable("当前场景未识别到需要到位确认的阀门或运动机构。")
         checks = {
-            "动作计时": contains_any_affirmed(context.plan_text, TIMER_TERMS),
-            "到位超时判断": contains_any_affirmed(context.plan_text, TIMEOUT_TERMS),
+            "动作计时": contains_any_affirmed(context.plan_text, TIMER_TERMS)
+            or contains_any_affirmed(
+                context.plan_text,
+                DEADLINE_NOT_REACHED_TERMS,
+            ),
+            "到位超时判断": contains_any_affirmed(context.plan_text, TIMEOUT_TERMS)
+            or contains_any_affirmed(
+                context.plan_text,
+                DEADLINE_NOT_REACHED_TERMS,
+            ),
             "超时停止": terms_near(context.plan_text, TIMEOUT_EVENT_TERMS, STOP_TERMS),
             "超时报警": terms_near(context.plan_text, TIMEOUT_EVENT_TERMS, ALARM_TERMS),
         }
@@ -565,12 +617,12 @@ class SafeStateUndefinedRule(ValidationRule):
             forbidden_detail_terms=NORMAL_OPERATION_TERMS,
         )
         applicable_groups = [
-            (label, action_terms)
+            (label, scenario_terms, action_terms)
             for label, scenario_terms, action_terms in SAFE_OUTPUT_DEVICE_GROUPS
             if contains_any(context.scenario_text, scenario_terms)
         ]
         uncovered: list[str] = []
-        for label, action_terms in applicable_groups:
+        for label, scenario_terms, action_terms in applicable_groups:
             if has_global_safe_action:
                 continue
             covered = terms_cooccur(
@@ -582,6 +634,12 @@ class SafeStateUndefinedRule(ValidationRule):
                 (safe_context_terms,),
                 action_terms,
                 forbidden_detail_terms=NORMAL_OPERATION_TERMS,
+            )
+            covered = covered or terms_cooccur(
+                context.plan_text,
+                safe_context_terms,
+                scenario_terms,
+                SHARED_SAFE_OUTPUT_ACTION_TERMS,
             )
             if not covered:
                 uncovered.append(label)
