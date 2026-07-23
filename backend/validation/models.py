@@ -20,6 +20,7 @@ class Severity(str, Enum):
 
 
 class RiskLevel(str, Enum):
+    UNKNOWN = "unknown"
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"

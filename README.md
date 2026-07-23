@@ -127,7 +127,7 @@ POST /generate
 
 ## 工业控制规则校验与风险评估
 
-规则引擎以固定顺序执行 14 条确定性规则，优先使用结构化 I/O 点表；文本字段采用集中维护的中英文关键词、别名和归一化策略。无法可靠判断的规则返回 `not_applicable`，单条规则异常会转换为脱敏的稳定结果，不会让方案生成接口失败。
+规则引擎以固定顺序执行 14 条确定性规则，优先使用结构化 I/O 点表；文本字段采用集中维护的中英文关键词、别名、句段边界和否定语义策略。无法可靠判断的规则返回 `not_applicable`，单条规则异常会转换为脱敏的稳定结果，不会让方案生成接口失败。
 
 | Rule ID | 规则 | 类别 | 严重程度 |
 | --- | --- | --- | --- |
@@ -163,7 +163,9 @@ POST /generate
 | 25–49 | high |
 | 50 及以上 | critical |
 
-`/generate` 和 `/optimize` 在保留原有字段的基础上附加可选的 `validation_report`，包含风险等级、风险分数、规则统计、问题列表、固定顺序的全部规则结果和 `request_id`。前端风险面板展示汇总指标、证据、修改建议和相关设备或点位，支持按严重程度及类别筛选，并默认隐藏 `not_applicable` 结果。后端回归使用 Fake LLM、Mock 和固定方案数据执行，不会由规则引擎发起网络或模型调用。
+当校验引擎整体不可用时，报告使用 `validation_status=unavailable`、`risk_level=unknown` 和 `risk_score=0`，同时将规则统计置空；此时的零分表示“未完成风险评估”，不表示低风险。单条规则异常则返回 `partial`，并继续执行其他规则。
+
+`/generate` 和 `/optimize` 在保留原有字段的基础上附加可选的 `validation_report`，包含风险等级、风险分数、规则统计、问题列表、固定顺序的全部规则结果和 `request_id`。前端风险面板展示汇总指标（包括 `not_applicable` 数量）、证据、修改建议和相关设备或点位，支持按严重程度及类别筛选，并默认隐藏 `not_applicable` 结果。后端回归使用 Fake LLM、Mock 和固定方案数据执行，不会由规则引擎发起网络或模型调用。
 
 ## 链路稳定性与测试
 
@@ -183,11 +185,12 @@ POST /generate
 
 ### 自动化回归
 
-后端测试使用 Fake LLM、Mock 和固定方案数据覆盖正常 Workflow、API 协议、请求标识、错误清洗、模型超时、有限重试、响应格式异常、14 条规则、评分边界、异常隔离及 10 个固定工业控制场景，不会发起真实模型调用。
+后端测试使用 Fake LLM、Mock 和固定方案数据覆盖正常 Workflow、API 协议、请求标识、错误清洗、模型超时、有限重试、响应格式异常、14 条规则、评分边界、异常隔离，以及原有与审查回归两组共 20 个固定工业控制场景，不会发起真实模型调用。
 
 | 验证项 | 命令 | 当前结果 |
 | --- | --- | --- |
-| 后端回归测试 | `python -m pytest backend\tests -q` | 84 passed |
+| 后端回归测试 | `python -m pytest backend\tests -q` | 137 passed |
+| 前端组件测试 | `npm.cmd run test` | 4 passed |
 | 前端生产构建 | `npm.cmd run build` | 通过 |
 
 GitHub Actions CI 在以下场景自动触发：
@@ -196,7 +199,7 @@ GitHub Actions CI 在以下场景自动触发：
 - 创建或更新面向 `main` 的 Pull Request
 - 手动运行 `workflow_dispatch`
 
-CI 的 `Backend Tests` 任务执行 Python 语法检查和 pytest 后端回归测试；`Frontend Build` 任务执行 `npm ci` 和 Vite 生产构建。
+CI 的 `Backend Tests` 任务执行 Python 语法检查和 pytest 后端回归测试；`Frontend Build` 任务执行 `npm ci`、前端组件测试和 Vite 生产构建。
 
 ## 项目亮点
 

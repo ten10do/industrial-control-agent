@@ -175,7 +175,7 @@ def _optimize_validation_context(
         source="optimize",
         request_id=request_id,
         scenario_text=_join_text(request.original_report, request.optimize_requirement),
-        plan_text=_join_text(response.optimized_report, response.change_summary),
+        plan_text=response.optimized_report,
         structured_io_available=False,
         control_requirements=request.optimize_requirement,
         report_text=response.optimized_report,

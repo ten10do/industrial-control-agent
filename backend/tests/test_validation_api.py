@@ -3,6 +3,8 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
+import backend.validation as validation_module
+import backend.validation.engine as validation_engine_module
 from backend.llm_client import FakeLLMClient
 from backend.main import app, get_llm_client
 
@@ -107,6 +109,17 @@ def test_optimize_keeps_legacy_fields_and_adds_validation_report(client: TestCli
     assert payload["change_summary"]
     assert payload["safety_notice"]
     assert payload["validation_report"] is not None
+    results = {
+        result["rule_id"]: result
+        for result in payload["validation_report"]["rule_results"]
+    }
+    io_rule_ids = {
+        "IO_DUPLICATE_ADDRESS",
+        "IO_DUPLICATE_NAME",
+        "IO_TYPE_MISMATCH",
+        "IO_TABLE_INCOMPLETE",
+    }
+    assert {results[rule_id]["status"] for rule_id in io_rule_ids} == {"not_applicable"}
 
 
 def test_validation_report_contains_same_request_id_as_response_header(
@@ -173,6 +186,35 @@ def test_fake_llm_is_called_once_and_validation_does_not_call_it_again() -> None
 
     assert response.status_code == 200
     assert fake.calls == 1
+
+
+def test_validation_unavailable_does_not_turn_generate_into_http_failure(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    def fail_setup():
+        raise RuntimeError("setup-failed")
+
+    def fail_logging(**kwargs):
+        raise RuntimeError("logging-failed")
+
+    monkeypatch.setattr(validation_module, "build_default_engine", fail_setup)
+    monkeypatch.setattr(validation_engine_module, "log_validation_event", fail_logging)
+
+    response = client.post(
+        "/generate",
+        headers={"X-Request-ID": "validation-unavailable-api-1"},
+        json=GENERATE_PAYLOAD,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["requirement_analysis"]
+    assert payload["report_markdown"]
+    assert payload["validation_report"]["validation_status"] == "unavailable"
+    assert payload["validation_report"]["risk_level"] == "unknown"
+    assert payload["validation_report"]["risk_score"] == 0
+    assert response.headers["x-request-id"] == "validation-unavailable-api-1"
 
 
 def test_same_fixed_input_and_request_id_produce_identical_validation_report(

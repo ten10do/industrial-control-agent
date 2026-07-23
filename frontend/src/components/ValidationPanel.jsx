@@ -18,6 +18,10 @@ const SEVERITY_LABELS = {
   info: "Info",
 };
 
+const RISK_LEVEL_LABELS = {
+  unknown: "未评估",
+};
+
 const STATUS_LABELS = {
   failed: "失败",
   warning: "警告",
@@ -145,9 +149,12 @@ function ValidationPanel({ report }) {
   );
 
   const riskLevel = normalizedValue(report?.risk_level) || "unknown";
+  const riskLabel = RISK_LEVEL_LABELS[riskLevel] || riskLevel.toUpperCase();
   const validationStatus = normalizedValue(report?.validation_status) || "complete";
   const validationIncomplete = validationStatus !== "complete";
-  const riskTone = riskLevel === "low"
+  const riskTone = riskLevel === "unknown"
+    ? "warning"
+    : riskLevel === "low"
     ? validationIncomplete ? "warning" : "success"
     : riskLevel === "medium"
       ? "warning"
@@ -158,12 +165,13 @@ function ValidationPanel({ report }) {
   });
 
   const summaryItems = [
-    { label: "风险等级", value: riskLevel.toUpperCase(), tone: riskTone },
+    { label: "风险等级", value: riskLabel, tone: riskTone },
     { label: "风险分数", value: numericValue(report?.risk_score), tone: riskTone },
     { label: "总规则", value: numericValue(report?.total_rules) },
     { label: "通过", value: numericValue(report?.passed_rules), tone: "success" },
     { label: "警告", value: numericValue(report?.warning_rules), tone: "warning" },
     { label: "失败", value: numericValue(report?.failed_rules), tone: "danger" },
+    { label: "不适用", value: numericValue(report?.not_applicable_rules) },
     { label: "Critical", value: numericValue(report?.critical_count), tone: "danger" },
     { label: "High", value: numericValue(report?.high_count), tone: "warning" },
   ];
@@ -177,7 +185,7 @@ function ValidationPanel({ report }) {
         </div>
         <span className={`validation-risk-badge ${riskTone}`}>
           <ShieldCheck size={16} aria-hidden="true" />
-          {riskLevel.toUpperCase()}
+          {riskLabel}
         </span>
       </div>
 

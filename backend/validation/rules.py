@@ -9,12 +9,14 @@ from .catalog import (
     CUT_OUTPUT_TERMS,
     DRY_RUN_TERMS,
     EMERGENCY_STOP_TERMS,
+    EMERGENCY_TRIGGER_TERMS,
     EXCLUSIVE_ACTION_PAIRS,
     FAULT_TERMS,
     FEEDBACK_ABNORMAL_TERMS,
     FEEDBACK_DEVICE_GROUPS,
     FEEDBACK_TERMS,
     GENERIC_EXCLUSIVE_TERMS,
+    GLOBAL_SAFE_OUTPUT_ACTION_TERMS,
     INTERLOCK_TERMS,
     LEVEL_ABNORMAL_TERMS,
     LOW_LEVEL_TERMS,
@@ -24,6 +26,8 @@ from .catalog import (
     MOTION_ACTUATOR_TERMS,
     MOTOR_TERMS,
     NO_SIMULTANEOUS_TERMS,
+    NORMAL_OPERATION_TERMS,
+    OVERLOAD_EVENT_TERMS,
     OVERLOAD_TERMS,
     OVERLOAD_PROTECTION_TERMS,
     PRIORITY_TERMS,
@@ -31,6 +35,7 @@ from .catalog import (
     RESET_TERMS,
     RUN_STATE_TERMS,
     RUN_STOP_ACTUATOR_TERMS,
+    SAFE_OUTPUT_DEVICE_GROUPS,
     SAFE_OUTPUT_ACTION_TERMS,
     SAFE_STATE_TERMS,
     SENSOR_FAULT_TERMS,
@@ -39,6 +44,7 @@ from .catalog import (
     START_TERMS,
     STOP_TERMS,
     TIMEOUT_ACTUATOR_TERMS,
+    TIMEOUT_EVENT_TERMS,
     TIMEOUT_TERMS,
     TIMER_TERMS,
     WATER_SYSTEM_TERMS,
@@ -52,7 +58,11 @@ from .catalog import (
     is_monitoring_only,
     normalize_address,
     normalize_name,
+    terms_cooccur,
+    terms_follow_condition,
+    terms_follow_trigger,
     terms_near,
+    terms_near_owner,
 )
 from .models import RuleResult, RuleStatus, Severity, ValidationContext, ValidationIOPoint
 
@@ -226,9 +236,33 @@ class EmergencyStopMissingRule(ValidationRule):
             return self.not_applicable("当前场景未识别到运动机构或危险执行器。")
         checks = {
             "急停输入": contains_any_affirmed(context.plan_text, EMERGENCY_STOP_TERMS),
-            "急停后输出断开": contains_any_affirmed(context.plan_text, CUT_OUTPUT_TERMS),
-            "急停优先级": contains_any_affirmed(context.plan_text, PRIORITY_TERMS),
-            "复位说明": contains_any_affirmed(context.plan_text, RESET_TERMS),
+            "急停后输出断开": terms_cooccur(
+                context.plan_text,
+                EMERGENCY_STOP_TERMS,
+                CUT_OUTPUT_TERMS,
+            )
+            or terms_follow_trigger(
+                context.plan_text,
+                EMERGENCY_STOP_TERMS,
+                EMERGENCY_TRIGGER_TERMS,
+                CUT_OUTPUT_TERMS,
+            ),
+            "急停优先级": terms_cooccur(
+                context.plan_text,
+                EMERGENCY_STOP_TERMS,
+                PRIORITY_TERMS,
+            ),
+            "复位说明": terms_cooccur(
+                context.plan_text,
+                EMERGENCY_STOP_TERMS,
+                RESET_TERMS,
+            )
+            or terms_follow_trigger(
+                context.plan_text,
+                EMERGENCY_STOP_TERMS,
+                EMERGENCY_TRIGGER_TERMS,
+                RESET_TERMS,
+            ),
         }
         missing = [name for name, present in checks.items() if not present]
         if not missing:
@@ -259,8 +293,8 @@ class MotorOverloadProtectionMissingRule(ValidationRule):
                 context.plan_text,
                 OVERLOAD_PROTECTION_TERMS,
             ),
-            "过载停机": terms_near(context.plan_text, OVERLOAD_TERMS, STOP_TERMS),
-            "过载报警": terms_near(context.plan_text, OVERLOAD_TERMS, ALARM_TERMS),
+            "过载停机": terms_near(context.plan_text, OVERLOAD_EVENT_TERMS, STOP_TERMS),
+            "过载报警": terms_near(context.plan_text, OVERLOAD_EVENT_TERMS, ALARM_TERMS),
         }
         missing = [name for name, present in checks.items() if not present]
         if not missing:
@@ -294,15 +328,30 @@ class MutualInterlockMissingRule(ValidationRule):
         for label, left_terms, right_terms in EXCLUSIVE_ACTION_PAIRS:
             if label not in pairs:
                 continue
-            covered = (
-                contains_any_affirmed(context.plan_text, left_terms)
-                and contains_any_affirmed(context.plan_text, right_terms)
-                and contains_any_affirmed(context.plan_text, INTERLOCK_TERMS)
+            covered = terms_cooccur(
+                context.plan_text,
+                left_terms,
+                right_terms,
+                INTERLOCK_TERMS,
+            ) or terms_follow_condition(
+                context.plan_text,
+                (left_terms, right_terms),
+                INTERLOCK_TERMS,
             )
             if not covered:
                 uncovered.append(label)
-        if "互斥输出" in pairs and not contains_any_affirmed(context.plan_text, INTERLOCK_TERMS):
-            uncovered.append("互斥输出")
+        if "互斥输出" in pairs:
+            generic_covered = terms_cooccur(
+                context.plan_text,
+                GENERIC_EXCLUSIVE_TERMS,
+                INTERLOCK_TERMS,
+            ) or terms_follow_condition(
+                context.plan_text,
+                (GENERIC_EXCLUSIVE_TERMS,),
+                INTERLOCK_TERMS,
+            )
+            if not generic_covered:
+                uncovered.append("互斥输出")
         if not uncovered:
             return self.passed("互斥动作均有明确的互锁说明。")
         return self.result(
@@ -334,10 +383,13 @@ class ActuatorFeedbackMissingRule(ValidationRule):
         missing = [
             label
             for label, terms in device_groups
-            if not terms_near(context.plan_text, terms, FEEDBACK_TERMS)
+            if not terms_near_owner(
+                context.plan_text,
+                terms,
+                FEEDBACK_TERMS,
+                tuple(group_terms for _, group_terms in FEEDBACK_DEVICE_GROUPS),
+            )
         ]
-        if len(device_groups) == 1 and contains_any_affirmed(context.plan_text, FEEDBACK_TERMS):
-            missing = []
         if not device_groups and contains_any_affirmed(context.plan_text, FEEDBACK_TERMS):
             return self.passed("方案包含执行器运行、故障或到位反馈。")
         if device_groups and not missing:
@@ -365,7 +417,7 @@ class AlarmCoverageIncompleteRule(ValidationRule):
         if contains_any(scenario, EMERGENCY_STOP_TERMS):
             expectations.append(("急停", EMERGENCY_STOP_TERMS))
         if contains_any(scenario, MOTOR_TERMS):
-            expectations.append(("过载", OVERLOAD_TERMS))
+            expectations.append(("过载", OVERLOAD_EVENT_TERMS))
         if contains_any(scenario, WATER_SYSTEM_TERMS):
             expectations.append(("液位异常", LEVEL_ABNORMAL_TERMS))
         if contains_any(scenario, SENSOR_TERMS):
@@ -374,7 +426,7 @@ class AlarmCoverageIncompleteRule(ValidationRule):
             expectations.append(("执行器故障", ACTUATOR_FAULT_TERMS))
             expectations.append(("反馈异常", FEEDBACK_ABNORMAL_TERMS))
         if contains_any(scenario, TIMEOUT_ACTUATOR_TERMS):
-            expectations.append(("动作超时", TIMEOUT_TERMS))
+            expectations.append(("动作超时", TIMEOUT_EVENT_TERMS))
         if not expectations:
             return self.not_applicable("当前场景未识别到需要报警覆盖的异常类型。")
 
@@ -438,8 +490,8 @@ class ActionTimeoutProtectionMissingRule(ValidationRule):
         checks = {
             "动作计时": contains_any_affirmed(context.plan_text, TIMER_TERMS),
             "到位超时判断": contains_any_affirmed(context.plan_text, TIMEOUT_TERMS),
-            "超时停止": terms_near(context.plan_text, TIMEOUT_TERMS, STOP_TERMS),
-            "超时报警": terms_near(context.plan_text, TIMEOUT_TERMS, ALARM_TERMS),
+            "超时停止": terms_near(context.plan_text, TIMEOUT_EVENT_TERMS, STOP_TERMS),
+            "超时报警": terms_near(context.plan_text, TIMEOUT_EVENT_TERMS, ALARM_TERMS),
         }
         missing = [name for name, present in checks.items() if not present]
         if not missing:
@@ -500,20 +552,63 @@ class SafeStateUndefinedRule(ValidationRule):
             return self.not_applicable("当前场景明确为纯监测，不控制重要输出。")
         if not contains_any(context.scenario_text, ACTUATOR_TERMS):
             return self.not_applicable("当前场景未识别到需要定义安全状态的重要输出。")
-        has_explicit_safe_state = contains_any_affirmed(context.plan_text, SAFE_STATE_TERMS)
-        has_safe_action = contains_any_affirmed(context.plan_text, SAFE_OUTPUT_ACTION_TERMS)
-        has_fault_action = terms_near(
+
+        safe_context_terms = FAULT_TERMS + SAFE_STATE_TERMS
+        has_global_safe_action = terms_cooccur(
             context.plan_text,
-            FAULT_TERMS,
-            SAFE_OUTPUT_ACTION_TERMS,
+            safe_context_terms,
+            GLOBAL_SAFE_OUTPUT_ACTION_TERMS,
+        ) or terms_follow_condition(
+            context.plan_text,
+            (safe_context_terms,),
+            GLOBAL_SAFE_OUTPUT_ACTION_TERMS,
+            forbidden_detail_terms=NORMAL_OPERATION_TERMS,
         )
-        if has_safe_action and (has_explicit_safe_state or has_fault_action):
+        applicable_groups = [
+            (label, action_terms)
+            for label, scenario_terms, action_terms in SAFE_OUTPUT_DEVICE_GROUPS
+            if contains_any(context.scenario_text, scenario_terms)
+        ]
+        uncovered: list[str] = []
+        for label, action_terms in applicable_groups:
+            if has_global_safe_action:
+                continue
+            covered = terms_cooccur(
+                context.plan_text,
+                safe_context_terms,
+                action_terms,
+            ) or terms_follow_condition(
+                context.plan_text,
+                (safe_context_terms,),
+                action_terms,
+                forbidden_detail_terms=NORMAL_OPERATION_TERMS,
+            )
+            if not covered:
+                uncovered.append(label)
+        if applicable_groups and not uncovered:
             return self.passed("方案定义了故障、停机或急停状态下的安全输出动作。")
+        if not applicable_groups:
+            generic_safe_action = terms_cooccur(
+                context.plan_text,
+                safe_context_terms,
+                SAFE_OUTPUT_ACTION_TERMS,
+            ) or terms_follow_condition(
+                context.plan_text,
+                (safe_context_terms,),
+                SAFE_OUTPUT_ACTION_TERMS,
+                forbidden_detail_terms=NORMAL_OPERATION_TERMS,
+            )
+            if generic_safe_action:
+                return self.passed("方案定义了故障、停机或急停状态下的安全输出动作。")
         return self.result(
             status=RuleStatus.FAILED,
             message="重要输出在停机、急停或故障状态下的安全状态不明确。",
-            evidence=["未发现故障安全状态或故障条件下的明确停机动作。"],
+            evidence=(
+                [f"未定义安全状态：{label}" for label in uncovered]
+                or ["未发现故障安全状态或故障条件下的明确停机动作。"]
+            ),
             recommendation="逐项定义电机、加热器、阀门等重要输出的故障安全状态。",
+            related_items=uncovered,
         )
 
 

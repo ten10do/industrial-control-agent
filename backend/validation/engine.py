@@ -8,6 +8,7 @@ except ImportError:
 
 from .base import ValidationRule
 from .models import (
+    RiskLevel,
     RuleResult,
     RuleStatus,
     Severity,
@@ -16,6 +17,33 @@ from .models import (
     ValidationStatus,
 )
 from .scoring import SCORING_STATUSES, risk_level_for_score, score_rule_results
+
+
+def _log_validation_event_safely(**event) -> None:
+    try:
+        log_validation_event(**event)
+    except Exception:
+        pass
+
+
+def _unavailable_report(context: ValidationContext) -> ValidationReport:
+    return ValidationReport(
+        request_id=context.request_id,
+        validation_status=ValidationStatus.UNAVAILABLE,
+        risk_level=RiskLevel.UNKNOWN,
+        risk_score=0,
+        total_rules=0,
+        passed_rules=0,
+        warning_rules=0,
+        failed_rules=0,
+        not_applicable_rules=0,
+        critical_count=0,
+        high_count=0,
+        medium_count=0,
+        low_count=0,
+        issues=[],
+        rule_results=[],
+    )
 
 
 class RuleEngine:
@@ -44,7 +72,7 @@ class RuleEngine:
         try:
             return self._validate(context)
         except Exception as exc:
-            log_validation_event(
+            _log_validation_event_safely(
                 request_id=context.request_id,
                 rule_id="VALIDATION_ENGINE",
                 category="engine",
@@ -69,7 +97,7 @@ class RuleEngine:
                 error_type = type(exc).__name__
                 result = self._rule_error_result(rule)
             duration_ms = (time.perf_counter() - started_at) * 1000
-            log_validation_event(
+            _log_validation_event_safely(
                 request_id=context.request_id,
                 rule_id=rule.rule_id,
                 category=rule.category,
@@ -93,16 +121,7 @@ class RuleEngine:
         )
 
     def _unavailable_report(self, context: ValidationContext) -> ValidationReport:
-        results = [
-            rule.result(
-                status=RuleStatus.WARNING,
-                message="校验引擎当前不可用，未完成该规则判断。",
-                evidence="内部校验不可用，未返回堆栈或方案正文。",
-                recommendation="请人工复核此项并稍后重新执行规则校验。",
-            )
-            for rule in self._rules
-        ]
-        return self._build_report(context, results, ValidationStatus.UNAVAILABLE)
+        return _unavailable_report(context)
 
     @staticmethod
     def _build_report(

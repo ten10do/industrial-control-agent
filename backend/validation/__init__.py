@@ -1,5 +1,5 @@
 from .base import ValidationRule
-from .engine import RuleEngine
+from .engine import RuleEngine, _log_validation_event_safely, _unavailable_report
 from .models import (
     RiskLevel,
     RuleResult,
@@ -13,11 +13,6 @@ from .models import (
 from .rules import build_default_rules
 from .scoring import SEVERITY_WEIGHTS, risk_level_for_score, score_rule_results
 
-try:
-    from ..observability import log_validation_event
-except ImportError:
-    from observability import log_validation_event
-
 
 def build_default_engine() -> RuleEngine:
     return RuleEngine(build_default_rules())
@@ -30,7 +25,7 @@ def validate_context(
     try:
         return (engine or build_default_engine()).validate(context)
     except Exception as exc:
-        log_validation_event(
+        _log_validation_event_safely(
             request_id=context.request_id,
             rule_id="VALIDATION_SETUP",
             category="engine",
@@ -38,23 +33,7 @@ def validate_context(
             severity=Severity.CRITICAL.value,
             error_type=type(exc).__name__,
         )
-        return ValidationReport(
-            request_id=context.request_id,
-            validation_status=ValidationStatus.UNAVAILABLE,
-            risk_level=RiskLevel.LOW,
-            risk_score=0,
-            total_rules=0,
-            passed_rules=0,
-            warning_rules=0,
-            failed_rules=0,
-            not_applicable_rules=0,
-            critical_count=0,
-            high_count=0,
-            medium_count=0,
-            low_count=0,
-            issues=[],
-            rule_results=[],
-        )
+        return _unavailable_report(context)
 
 
 __all__ = [

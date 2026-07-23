@@ -3,6 +3,8 @@ import logging
 
 import pytest
 
+import backend.validation as validation_module
+import backend.validation.engine as validation_engine_module
 from backend.validation import (
     RiskLevel,
     RuleEngine,
@@ -10,6 +12,7 @@ from backend.validation import (
     Severity,
     ValidationRule,
     ValidationStatus,
+    validate_context,
 )
 from backend.tests.validation_fixtures import validation_context
 
@@ -173,3 +176,63 @@ def test_rule_execution_log_has_required_fields_without_plan_text(caplog) -> Non
     assert payloads[0]["status"] == "passed"
     assert "sensitive scenario body" not in payloads[0].values()
     assert "sensitive full plan body" not in payloads[0].values()
+
+
+def assert_unavailable_report(report, *, request_id: str) -> None:
+    assert report.request_id == request_id
+    assert report.validation_status == ValidationStatus.UNAVAILABLE
+    assert report.risk_level == RiskLevel.UNKNOWN
+    assert report.risk_score == 0
+    assert report.total_rules == 0
+    assert report.passed_rules == 0
+    assert report.warning_rules == 0
+    assert report.failed_rules == 0
+    assert report.not_applicable_rules == 0
+    assert report.critical_count == 0
+    assert report.high_count == 0
+    assert report.medium_count == 0
+    assert report.low_count == 0
+    assert report.issues == []
+    assert report.rule_results == []
+
+
+def test_report_build_failure_returns_standalone_unavailable_report(monkeypatch) -> None:
+    engine = RuleEngine([FixedRule("REPORT_BUILD")])
+
+    def fail_report_build(*args, **kwargs):
+        raise RuntimeError("report-builder-failed")
+
+    monkeypatch.setattr(engine, "_build_report", fail_report_build)
+
+    report = engine.validate(validation_context(request_id="engine-unavailable-1"))
+
+    assert_unavailable_report(report, request_id="engine-unavailable-1")
+
+
+def test_validation_logging_failure_does_not_change_successful_report(monkeypatch) -> None:
+    def fail_logging(**kwargs):
+        raise RuntimeError("logging-failed")
+
+    monkeypatch.setattr(validation_engine_module, "log_validation_event", fail_logging)
+
+    report = RuleEngine([FixedRule("LOGGING_FAILURE")]).validate(
+        validation_context(request_id="logging-failure-1")
+    )
+
+    assert report.validation_status == ValidationStatus.COMPLETE
+    assert report.rule_results[0].status == RuleStatus.PASSED
+
+
+def test_validate_context_setup_and_logging_failures_return_unavailable(monkeypatch) -> None:
+    def fail_setup():
+        raise RuntimeError("setup-failed")
+
+    def fail_logging(**kwargs):
+        raise RuntimeError("logging-failed")
+
+    monkeypatch.setattr(validation_module, "build_default_engine", fail_setup)
+    monkeypatch.setattr(validation_engine_module, "log_validation_event", fail_logging)
+
+    report = validate_context(validation_context(request_id="setup-unavailable-1"))
+
+    assert_unavailable_report(report, request_id="setup-unavailable-1")
