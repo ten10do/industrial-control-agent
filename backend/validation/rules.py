@@ -891,8 +891,6 @@ class SafeStateUndefinedRule(ValidationRule):
         )
         scopes = multi_device_scopes(context, ACTUATOR_KINDS)
         if scopes:
-            if has_global_safe_action:
-                return self.passed("方案为所有重要输出定义了故障安全状态。")
             missing_devices = [
                 scope.device.label
                 for scope in scopes

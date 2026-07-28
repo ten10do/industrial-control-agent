@@ -895,3 +895,60 @@ def test_explicit_universal_evidence_covers_all_motor_instances() -> None:
         "SAFE_STATE_UNDEFINED",
     ):
         assert default_rule_result(rule_id, context).status == RuleStatus.PASSED
+
+class TestInstanceEvidenceAttribution:
+    """Verify rules attribute missing evidence to specific device instances."""
+
+    def test_safe_state_global_action_cannot_mask_per_device_gap(self) -> None:
+        ctx = validation_context(
+            scenario_text="1号电机启动后运行，2号排水阀延时开启。",
+            plan_text=(
+                "1号电机启动后运行，故障时停止。"
+                "2号排水阀延时开启。"
+            ),
+            output_devices="1号电机, 2号排水阀",
+            structured_io_available=False,
+        )
+        report = build_default_engine().validate(ctx)
+        safe_findings = [r for r in report.rule_results if r.rule_id == "SAFE_STATE_UNDEFINED"]
+        assert safe_findings
+        finding = safe_findings[0]
+        assert finding.status == RuleStatus.FAILED
+        evidence_text = " ".join(str(e) for e in (finding.evidence or []))
+        assert "2" in evidence_text and ("号" in evidence_text or "valve" in evidence_text.lower())
+
+    def test_feedback_rule_attributes_per_instance(self) -> None:
+        ctx = validation_context(
+            scenario_text="1号循环水泵和2号循环水泵均需运行反馈。",
+            plan_text=(
+                "1号循环水泵配置运行反馈和故障反馈。"
+                "2号循环水泵根据液位启停。"
+            ),
+            output_devices="1号循环水泵, 2号循环水泵",
+            structured_io_available=False,
+        )
+        report = build_default_engine().validate(ctx)
+        feedback_findings = [r for r in report.rule_results if r.rule_id == "ACTUATOR_FEEDBACK_MISSING"]
+        assert feedback_findings
+        finding = feedback_findings[0]
+        evidence_text = " ".join(str(e) for e in (finding.evidence or []))
+        assert "2" in evidence_text and "号" in evidence_text
+        assert "1" not in evidence_text or "号" not in evidence_text.replace("1", "")
+
+    def test_interlock_rule_attributes_per_instance(self) -> None:
+        ctx = validation_context(
+            scenario_text="1号电机和2号电机均需正反转互锁。",
+            plan_text=(
+                "1号电机正转和反转通过接触器互锁。"
+                "2号电机正转和反转分别由独立接触器驱动。"
+            ),
+            output_devices="1号电机正转, 1号电机反转, 2号电机正转, 2号电机反转",
+            structured_io_available=False,
+        )
+        report = build_default_engine().validate(ctx)
+        interlock_findings = [r for r in report.rule_results if r.rule_id == "MUTUAL_INTERLOCK_MISSING"]
+        assert interlock_findings
+        finding = interlock_findings[0]
+        evidence_text = " ".join(str(e) for e in (finding.evidence or []))
+        assert "2" in evidence_text and "号" in evidence_text
+        assert "1" not in evidence_text or "号" not in evidence_text.replace("1", "")
