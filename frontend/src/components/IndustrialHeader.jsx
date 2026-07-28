@@ -5,6 +5,7 @@ const STATUS_LABELS = {
   checking: "Checking",
   online: "Online",
   offline: "Offline",
+  warming_up: "Warming Up",
 };
 
 
