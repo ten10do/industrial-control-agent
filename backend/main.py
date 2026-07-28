@@ -21,14 +21,14 @@ if __package__:
     from .errors import AppError, LLMResponseFormatError, LLMTimeoutError, WorkflowExecutionError
     from .llm_client import DeepSeekLLMClient, LLMClientError
     from .observability import get_request_id, set_request_id, setup_logging
-    from .schemas import ErrorResponse, GenerateRequest, GenerateResponse, OptimizeRequest, OptimizeResponse
+    from .schemas import ErrorResponse, GenerateRequest, GenerateResponse, OptimizeRequest, OptimizeResponse, ValidateRequest, ValidateResponse
 else:
     from agent_core import AgentCoreError, generate_control_plan, optimize_control_plan
     from traffic_control import RateLimitExceeded, ConcurrencyLimitExceeded, RequestTimeoutExceeded, acquire_request, release_request
     from errors import AppError, LLMResponseFormatError, LLMTimeoutError, WorkflowExecutionError
     from llm_client import DeepSeekLLMClient, LLMClientError
     from observability import get_request_id, set_request_id, setup_logging
-    from schemas import ErrorResponse, GenerateRequest, GenerateResponse, OptimizeRequest, OptimizeResponse
+    from schemas import ErrorResponse, GenerateRequest, GenerateResponse, OptimizeRequest, OptimizeResponse, ValidateRequest, ValidateResponse
 
 
 PROJECT_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
@@ -260,6 +260,41 @@ def _do_optimize(request: OptimizeRequest, llm_client: DeepSeekLLMClient) -> Opt
         raise APIServiceError("控制方案优化失败", str(exc)) from exc
     except Exception as exc:
         raise APIServiceError("控制方案优化失败", "服务内部错误") from exc
+
+
+@app.post(
+    "/validate",
+    response_model=ValidateResponse,
+    responses={422: {"model": ErrorResponse}},
+)
+def validate_plan(
+    request: ValidateRequest,
+) -> ValidateResponse:
+    """Validate an existing control plan without calling the model."""
+    from .validation import build_default_engine, ValidationContext, ValidationIOPoint
+    
+    scenario = request.scenario_text or " ".join(
+        t for t in (
+            request.control_object,
+            request.input_devices,
+            request.output_devices,
+            request.control_requirements,
+        ) if t
+    )
+    ctx = ValidationContext(
+        source="validate",
+        request_id=get_request_id(),
+        scenario_text=scenario,
+        plan_text=request.plan_text,
+        structured_io_available=False,
+        control_object=request.control_object,
+        input_devices=request.input_devices,
+        output_devices=request.output_devices,
+        control_requirements=request.control_requirements,
+        report_text=request.plan_text,
+    )
+    report = build_default_engine().validate(ctx)
+    return ValidateResponse(validation_report=report)
 
 _current_request_ctx = threading.local()
 

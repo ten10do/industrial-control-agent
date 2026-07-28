@@ -157,3 +157,40 @@ def test_unexpected_generate_error_is_sanitized(client: TestClient) -> None:
     assert "internal-configuration-detail" not in response.text
     assert "Traceback" not in response.text
     assert "DEEPSEEK_API_KEY" not in response.text
+def test_validate_endpoint_returns_report_without_calling_model(client: TestClient) -> None:
+    response = client.post(
+        "/validate",
+        json={
+            "plan_text": "1号电机配置过载保护、急停和运行反馈。故障时停止所有输出。",
+            "control_object": "Motor",
+        },
+    )
+    assert response.status_code == 200
+    report = response.json()["validation_report"]
+    assert report["total_rules"] == 14
+    assert report["validation_status"] in ("complete", "insufficient_data")
+
+
+def test_validate_endpoint_detects_missing_protection(client: TestClient) -> None:
+    response = client.post(
+        "/validate",
+        json={
+            "plan_text": "1号电机通过接触器启停，无急停按钮，无过载保护。",
+            "control_object": "Motor",
+            "output_devices": "Motor contactor",
+        },
+    )
+    assert response.status_code == 200
+    report = response.json()["validation_report"]
+    issue_ids = [r["rule_id"] for r in report["issues"]]
+    assert "EMERGENCY_STOP_MISSING" in issue_ids
+
+
+def test_validate_endpoint_accepts_minimal_text(client: TestClient) -> None:
+    response = client.post(
+        "/validate",
+        json={
+            "plan_text": "Monitoring only: display temperature and pressure.",
+        },
+    )
+    assert response.status_code == 200
