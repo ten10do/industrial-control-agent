@@ -1,13 +1,32 @@
 import json
 import logging
+import os
+import sys
 import time
-from contextvars import ContextVar
 from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Iterator
 
-
 request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
-logger = logging.getLogger("industrial_control_agent")
+_logger: logging.Logger | None = None
+
+
+def setup_logging(level: str | None = None) -> logging.Logger:
+    global _logger
+    if _logger is not None:
+        return _logger
+    _logger = logging.getLogger("industrial_control_agent")
+    _logger.setLevel((level or os.getenv("LOG_LEVEL", "INFO")).upper())
+    if not _logger.handlers:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(
+            logging.Formatter(
+                '{"timestamp":"%(asctime)s","logger":"%(name)s","level":"%(levelname)s","message":%(message)s}',
+                datefmt="%Y-%m-%dT%H:%M:%S",
+            )
+        )
+        _logger.addHandler(handler)
+    return _logger
 
 
 def set_request_id(request_id: str) -> None:
@@ -16,6 +35,11 @@ def set_request_id(request_id: str) -> None:
 
 def get_request_id() -> str | None:
     return request_id_var.get()
+
+
+def _log_event(payload: dict) -> None:
+    logger = _logger or setup_logging()
+    logger.info(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
 
 
 def log_workflow_event(
@@ -28,7 +52,7 @@ def log_workflow_event(
     error_type: str | None = None,
     request_id: str | None = None,
 ) -> None:
-    payload = {
+    _log_event({
         "request_id": request_id or get_request_id(),
         "workflow_name": workflow_name,
         "step_name": step_name,
@@ -36,8 +60,7 @@ def log_workflow_event(
         "duration_ms": round(duration_ms, 2),
         "retry_count": retry_count,
         "error_type": error_type,
-    }
-    logger.info(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+    })
 
 
 def log_validation_event(
@@ -50,7 +73,7 @@ def log_validation_event(
     error_type: str | None = None,
     request_id: str | None = None,
 ) -> None:
-    payload = {
+    _log_event({
         "request_id": request_id or get_request_id(),
         "rule_id": rule_id,
         "category": category,
@@ -58,8 +81,7 @@ def log_validation_event(
         "severity": severity,
         "duration_ms": round(duration_ms, 2),
         "error_type": error_type,
-    }
-    logger.info(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+    })
 
 
 @contextmanager
