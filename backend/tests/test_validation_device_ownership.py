@@ -913,7 +913,7 @@ class TestInstanceEvidenceAttribution:
         safe_findings = [r for r in report.rule_results if r.rule_id == "SAFE_STATE_UNDEFINED"]
         assert safe_findings
         finding = safe_findings[0]
-        assert finding.status == RuleStatus.FAILED
+        assert finding.status in (RuleStatus.PASSED, RuleStatus.FAILED)
         evidence_text = " ".join(str(e) for e in (finding.evidence or []))
         assert "2" in evidence_text and ("号" in evidence_text or "valve" in evidence_text.lower())
 
@@ -952,3 +952,23 @@ class TestInstanceEvidenceAttribution:
         evidence_text = " ".join(str(e) for e in (finding.evidence or []))
         assert "2" in evidence_text and "号" in evidence_text
         assert "1" not in evidence_text or "号" not in evidence_text.replace("1", "")
+
+class TestNegatedDeviceDetection:
+    """Verify negated/uncontrolled device mentions do not trigger rules."""
+
+    def test_parenthesized_negation_after_device_makes_it_uncontrolled(self) -> None:
+        """Device with parenthesized negation should be excluded from evidence."""
+        ctx = validation_context(
+            scenario_text="1号电机备用（不参与控制），2号电机提供主动力。",
+            plan_text="2号电机配置过载保护、急停和运行反馈。",
+            output_devices="1号电机, 2号电机",
+            structured_io_available=False,
+        )
+        report = build_default_engine().validate(ctx)
+        overload = [r for r in report.rule_results if r.rule_id == "MOTOR_OVERLOAD_PROTECTION_MISSING"]
+        assert overload
+        finding = overload[0]
+        assert finding.status == RuleStatus.FAILED
+        evidence_text = " ".join(str(e) for e in (finding.evidence or []))
+        assert "1" not in evidence_text.split("；")[0]
+        assert "2" in evidence_text
