@@ -330,9 +330,11 @@ def _mention_state(text: str, start: int, end: int) -> DeviceState:
         return DeviceState.PRESENT_UNCONTROLLED
     if _UNCONTROLLED_AFTER_RE.match(after):
         return DeviceState.PRESENT_UNCONTROLLED
-    after_short = after[:30]
-    if _PARENTHESIZED_UNCONTROLLED_AFTER_RE.search(after_short):
-        return DeviceState.PRESENT_UNCONTROLLED
+    paren_match = _PARENTHESIZED_UNCONTROLLED_AFTER_RE.search(after)
+    if paren_match and paren_match.start() < 30:
+        gap = after[:paren_match.start()]
+        if not re.search(r"\d", gap):
+            return DeviceState.PRESENT_UNCONTROLLED
     absence_after = _ENTITY_ABSENCE_AFTER_RE.match(after)
     if absence_after:
         remaining = after[absence_after.end():].lstrip()
