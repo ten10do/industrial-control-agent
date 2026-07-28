@@ -3,7 +3,6 @@ from collections import defaultdict
 from .base import ValidationRule
 from .catalog import (
     ACTUATOR_FAULT_TERMS,
-    ACTUATOR_TERMS,
     ALARM_TERMS,
     AUTO_TERMS,
     CUT_OUTPUT_TERMS,
@@ -26,19 +25,15 @@ from .catalog import (
     MANUAL_AUTHORITY_TERMS,
     MANUAL_TERMS,
     MODE_SELECT_TERMS,
-    MOTION_ACTUATOR_TERMS,
-    MOTOR_TERMS,
     NO_SIMULTANEOUS_TERMS,
     NORMAL_OPERATION_TERMS,
     OVERLOAD_EVENT_TERMS,
     OVERLOAD_TERMS,
     OVERLOAD_PROTECTION_TERMS,
     PRIORITY_TERMS,
-    PUMP_TERMS,
     RESET_TERMS,
     RESTART_TERMS,
     RUN_STATE_TERMS,
-    RUN_STOP_ACTUATOR_TERMS,
     SAFE_OUTPUT_DEVICE_GROUPS,
     SAFE_OUTPUT_ACTION_TERMS,
     SHARED_SAFE_OUTPUT_ACTION_TERMS,
@@ -49,7 +44,6 @@ from .catalog import (
     START_TERMS,
     START_INHIBIT_TERMS,
     STOP_TERMS,
-    TIMEOUT_ACTUATOR_TERMS,
     TIMEOUT_EVENT_TERMS,
     TIMEOUT_TERMS,
     TIMER_TERMS,
@@ -61,7 +55,6 @@ from .catalog import (
     contains_any_affirmed,
     expected_direction,
     expected_signal_kind,
-    is_monitoring_only,
     normalize_address,
     normalize_name,
     terms_cooccur,
@@ -69,6 +62,17 @@ from .catalog import (
     terms_follow_trigger,
     terms_near,
     terms_near_owner,
+)
+from .device_semantics import (
+    ACTUATOR_KINDS,
+    MOTION_KINDS,
+    MOTOR_KINDS,
+    PUMP_KINDS,
+    RUN_STOP_KINDS,
+    TIMEOUT_KINDS,
+    DeviceScope,
+    has_controlled_device,
+    multi_device_scopes,
 )
 from .models import RuleResult, RuleStatus, Severity, ValidationContext, ValidationIOPoint
 
@@ -79,6 +83,229 @@ def _point_label(point: ValidationIOPoint) -> str:
 
 def _missing_evidence(missing: list[str]) -> list[str]:
     return [f"缺少：{item}" for item in missing]
+
+
+def _instance_failures(
+    scopes: tuple[DeviceScope, ...],
+    checker,
+) -> list[tuple[str, list[str]]]:
+    failures: list[tuple[str, list[str]]] = []
+    for scope in scopes:
+        missing = [
+            name
+            for name, present in checker(scope.plan_text).items()
+            if not present
+        ]
+        if missing:
+            failures.append((scope.device.label, missing))
+    return failures
+
+
+def _instance_failure_evidence(
+    failures: list[tuple[str, list[str]]],
+) -> list[str]:
+    return [
+        f"{device}缺少：{'、'.join(missing)}"
+        for device, missing in failures
+    ]
+
+
+def _instance_failure_devices(
+    failures: list[tuple[str, list[str]]],
+) -> list[str]:
+    return [device for device, _ in failures]
+
+
+def _start_stop_checks(text: str) -> dict[str, bool]:
+    return {
+        "启动条件": contains_any_affirmed(text, START_TERMS),
+        "停止条件": contains_any_affirmed(text, STOP_TERMS),
+        "停机输出处理": contains_any_affirmed(text, SHUTDOWN_LOGIC_TERMS),
+        "运行状态或反馈": contains_any_affirmed(text, RUN_STATE_TERMS),
+    }
+
+
+def _emergency_stop_checks(text: str) -> dict[str, bool]:
+    emergency_cut = terms_cooccur(
+        text,
+        EMERGENCY_STOP_TERMS,
+        CUT_OUTPUT_TERMS,
+    ) or terms_follow_trigger(
+        text,
+        EMERGENCY_STOP_TERMS,
+        EMERGENCY_TRIGGER_TERMS,
+        CUT_OUTPUT_TERMS,
+    )
+    immediate_emergency_cut = emergency_cut and terms_cooccur(
+        text,
+        EMERGENCY_STOP_TERMS,
+        IMMEDIATE_ACTION_TERMS,
+        CUT_OUTPUT_TERMS,
+    )
+    return {
+        "急停输入": contains_any_affirmed(text, EMERGENCY_STOP_TERMS),
+        "急停后输出断开": emergency_cut,
+        "急停优先级": terms_cooccur(
+            text,
+            EMERGENCY_STOP_TERMS,
+            PRIORITY_TERMS,
+        )
+        or immediate_emergency_cut,
+        "复位说明": terms_cooccur(
+            text,
+            EMERGENCY_STOP_TERMS,
+            RESET_TERMS,
+        )
+        or terms_follow_trigger(
+            text,
+            EMERGENCY_STOP_TERMS,
+            EMERGENCY_TRIGGER_TERMS,
+            RESET_TERMS,
+        )
+        or (
+            emergency_cut
+            and terms_cooccur(
+                text,
+                RESET_TERMS,
+                RESTART_TERMS,
+            )
+        ),
+    }
+
+
+def _overload_checks(text: str) -> dict[str, bool]:
+    return {
+        "过载检测信号": contains_any_affirmed(text, OVERLOAD_TERMS),
+        "热继电器或等效保护": contains_any_affirmed(
+            text,
+            OVERLOAD_PROTECTION_TERMS,
+        ),
+        "过载停机": terms_near(text, OVERLOAD_EVENT_TERMS, STOP_TERMS),
+        "过载报警": terms_near(text, OVERLOAD_EVENT_TERMS, ALARM_TERMS),
+    }
+
+
+def _dry_run_checks(text: str) -> dict[str, bool]:
+    return {
+        "低液位或缺水检测": contains_any_affirmed(text, LOW_LEVEL_TERMS),
+        "防干转逻辑": contains_any_affirmed(text, DRY_RUN_TERMS)
+        or terms_near(
+            text,
+            LOW_LEVEL_TERMS,
+            START_INHIBIT_TERMS,
+        ),
+        "缺水停泵": terms_near(text, LOW_LEVEL_TERMS, STOP_TERMS)
+        or terms_near(
+            text,
+            LOW_LEVEL_TERMS,
+            START_INHIBIT_TERMS,
+        ),
+        "缺水报警": terms_near(text, LOW_LEVEL_TERMS, ALARM_TERMS),
+    }
+
+
+def _timeout_checks(text: str) -> dict[str, bool]:
+    return {
+        "动作计时": contains_any_affirmed(text, TIMER_TERMS)
+        or contains_any_affirmed(
+            text,
+            DEADLINE_NOT_REACHED_TERMS,
+        ),
+        "到位超时判断": contains_any_affirmed(text, TIMEOUT_TERMS)
+        or contains_any_affirmed(
+            text,
+            DEADLINE_NOT_REACHED_TERMS,
+        ),
+        "超时停止": terms_near(text, TIMEOUT_EVENT_TERMS, STOP_TERMS),
+        "超时报警": terms_near(text, TIMEOUT_EVENT_TERMS, ALARM_TERMS),
+    }
+
+
+def _mode_checks(text: str) -> dict[str, bool]:
+    return {
+        "模式选择或切换": contains_any_affirmed(text, MODE_SELECT_TERMS),
+        "模式互锁": contains_any_affirmed(text, INTERLOCK_TERMS),
+        "手动权限": contains_any_affirmed(text, MANUAL_AUTHORITY_TERMS),
+        "禁止同时生效": contains_any_affirmed(
+            text,
+            NO_SIMULTANEOUS_TERMS,
+        ),
+    }
+
+
+def _safe_scope_covered(text: str, kind: str) -> bool:
+    safe_context_terms = FAULT_TERMS + SAFE_STATE_TERMS
+    scoped_action_terms = STOP_TERMS + CUT_OUTPUT_TERMS
+    if kind == "valve":
+        scoped_action_terms += (
+            "关闭",
+            "打开",
+            "安全位置",
+            "closed",
+            "open",
+            "safe position",
+        )
+    elif kind == "heater":
+        scoped_action_terms += (
+            "关闭",
+            "off",
+        )
+    elif kind in {"cylinder", "actuator"}:
+        scoped_action_terms += (
+            "安全位置",
+            "safe position",
+        )
+    return terms_cooccur(
+        text,
+        safe_context_terms,
+        scoped_action_terms,
+    ) or terms_follow_condition(
+        text,
+        (safe_context_terms,),
+        scoped_action_terms,
+        forbidden_detail_terms=NORMAL_OPERATION_TERMS,
+    )
+
+
+def _interlock_uncovered(text: str, pairs: list[str]) -> list[str]:
+    uncovered: list[str] = []
+    for label, left_terms, right_terms in EXCLUSIVE_ACTION_PAIRS:
+        if label not in pairs:
+            continue
+        covered = terms_cooccur(
+            text,
+            left_terms,
+            right_terms,
+            INTERLOCK_TERMS,
+        ) or terms_follow_condition(
+            text,
+            (left_terms, right_terms),
+            INTERLOCK_TERMS,
+        )
+        compound_terms = EXCLUSIVE_ACTION_COMPOUND_TERMS.get(label, ())
+        covered = covered or (
+            bool(compound_terms)
+            and terms_cooccur(
+                text,
+                compound_terms,
+                INTERLOCK_TERMS,
+            )
+        )
+        if not covered:
+            uncovered.append(label)
+    if "互斥输出" in pairs:
+        generic_covered = terms_cooccur(
+            text,
+            GENERIC_EXCLUSIVE_TERMS,
+            INTERLOCK_TERMS,
+        ) or terms_follow_condition(
+            text,
+            (GENERIC_EXCLUSIVE_TERMS,),
+            INTERLOCK_TERMS,
+        )
+        if not generic_covered:
+            uncovered.append("互斥输出")
+    return uncovered
 
 
 class DuplicateAddressRule(ValidationRule):
@@ -207,16 +434,21 @@ class StartStopIncompleteRule(ValidationRule):
     default_severity = Severity.HIGH
 
     def validate(self, context: ValidationContext) -> RuleResult:
-        if is_monitoring_only(context.scenario_text):
-            return self.not_applicable("当前场景明确为纯监测，不执行设备启停控制。")
-        if not contains_any(context.scenario_text, RUN_STOP_ACTUATOR_TERMS):
+        if not has_controlled_device(context, RUN_STOP_KINDS):
             return self.not_applicable("当前场景未识别到需要启停控制的执行设备。")
-        checks = {
-            "启动条件": contains_any_affirmed(context.plan_text, START_TERMS),
-            "停止条件": contains_any_affirmed(context.plan_text, STOP_TERMS),
-            "停机输出处理": contains_any_affirmed(context.plan_text, SHUTDOWN_LOGIC_TERMS),
-            "运行状态或反馈": contains_any_affirmed(context.plan_text, RUN_STATE_TERMS),
-        }
+        scopes = multi_device_scopes(context, RUN_STOP_KINDS)
+        if scopes:
+            failures = _instance_failures(scopes, _start_stop_checks)
+            if not failures:
+                return self.passed("方案包含各设备的启动、停止、停机处理和运行状态说明。")
+            return self.result(
+                status=RuleStatus.FAILED,
+                message="部分执行设备的启停控制链路不完整。",
+                evidence=_instance_failure_evidence(failures),
+                recommendation="逐台补充启动条件、停止条件、停机输出处理和运行反馈。",
+                related_items=_instance_failure_devices(failures),
+            )
+        checks = _start_stop_checks(context.plan_text)
         missing = [name for name, present in checks.items() if not present]
         if not missing:
             return self.passed("方案包含启动、停止、停机处理和运行状态说明。")
@@ -236,59 +468,21 @@ class EmergencyStopMissingRule(ValidationRule):
     default_severity = Severity.CRITICAL
 
     def validate(self, context: ValidationContext) -> RuleResult:
-        if is_monitoring_only(context.scenario_text):
-            return self.not_applicable("当前场景明确为纯监测，不控制运动机构或危险执行器。")
-        if not contains_any(context.scenario_text, MOTION_ACTUATOR_TERMS):
+        if not has_controlled_device(context, MOTION_KINDS):
             return self.not_applicable("当前场景未识别到运动机构或危险执行器。")
-        checks = {
-            "急停输入": contains_any_affirmed(context.plan_text, EMERGENCY_STOP_TERMS),
-        }
-        emergency_cut = terms_cooccur(
-            context.plan_text,
-            EMERGENCY_STOP_TERMS,
-            CUT_OUTPUT_TERMS,
-        ) or terms_follow_trigger(
-            context.plan_text,
-            EMERGENCY_STOP_TERMS,
-            EMERGENCY_TRIGGER_TERMS,
-            CUT_OUTPUT_TERMS,
-        )
-        immediate_emergency_cut = emergency_cut and terms_cooccur(
-            context.plan_text,
-            EMERGENCY_STOP_TERMS,
-            IMMEDIATE_ACTION_TERMS,
-            CUT_OUTPUT_TERMS,
-        )
-        checks.update(
-            {
-                "急停后输出断开": emergency_cut,
-                "急停优先级": terms_cooccur(
-                    context.plan_text,
-                    EMERGENCY_STOP_TERMS,
-                    PRIORITY_TERMS,
-                )
-                or immediate_emergency_cut,
-                "复位说明": terms_cooccur(
-                    context.plan_text,
-                    EMERGENCY_STOP_TERMS,
-                    RESET_TERMS,
-                )
-                or terms_follow_trigger(
-                    context.plan_text,
-                    EMERGENCY_STOP_TERMS,
-                    EMERGENCY_TRIGGER_TERMS,
-                    RESET_TERMS,
-                )
-                or (
-                    emergency_cut
-                    and terms_cooccur(
-                        context.plan_text,
-                        RESET_TERMS,
-                        RESTART_TERMS,
-                    )
-                ),
-            }
-        )
+        scopes = multi_device_scopes(context, MOTION_KINDS)
+        if scopes:
+            failures = _instance_failures(scopes, _emergency_stop_checks)
+            if not failures:
+                return self.passed("各运动设备的急停输入、输出切断、优先级和复位说明完整。")
+            return self.result(
+                status=RuleStatus.FAILED,
+                message="部分运动设备缺少完整急停安全链路。",
+                evidence=_instance_failure_evidence(failures),
+                recommendation="逐台补充急停输入、最高优先级输出切断和人工复位要求。",
+                related_items=_instance_failure_devices(failures),
+            )
+        checks = _emergency_stop_checks(context.plan_text)
         missing = [name for name, present in checks.items() if not present]
         if not missing:
             return self.passed("急停输入、输出切断、优先级和复位说明完整。")
@@ -308,19 +502,21 @@ class MotorOverloadProtectionMissingRule(ValidationRule):
     default_severity = Severity.HIGH
 
     def validate(self, context: ValidationContext) -> RuleResult:
-        if is_monitoring_only(context.scenario_text):
-            return self.not_applicable("当前场景明确为纯监测，不负责电机类设备保护控制。")
-        if not contains_any(context.scenario_text, MOTOR_TERMS):
+        if not has_controlled_device(context, MOTOR_KINDS):
             return self.not_applicable("当前场景未识别到电机、水泵或风机。")
-        checks = {
-            "过载检测信号": contains_any_affirmed(context.plan_text, OVERLOAD_TERMS),
-            "热继电器或等效保护": contains_any_affirmed(
-                context.plan_text,
-                OVERLOAD_PROTECTION_TERMS,
-            ),
-            "过载停机": terms_near(context.plan_text, OVERLOAD_EVENT_TERMS, STOP_TERMS),
-            "过载报警": terms_near(context.plan_text, OVERLOAD_EVENT_TERMS, ALARM_TERMS),
-        }
+        scopes = multi_device_scopes(context, MOTOR_KINDS)
+        if scopes:
+            failures = _instance_failures(scopes, _overload_checks)
+            if not failures:
+                return self.passed("各电机类设备均包含过载检测、停机和报警。")
+            return self.result(
+                status=RuleStatus.FAILED,
+                message="部分电机类设备的过载保护不完整。",
+                evidence=_instance_failure_evidence(failures),
+                recommendation="逐台增加过载检测或等效保护，并联动停机和报警。",
+                related_items=_instance_failure_devices(failures),
+            )
+        checks = _overload_checks(context.plan_text)
         missing = [name for name, present in checks.items() if not present]
         if not missing:
             return self.passed("方案包含过载检测、停机和报警。")
@@ -340,8 +536,8 @@ class MutualInterlockMissingRule(ValidationRule):
     default_severity = Severity.CRITICAL
 
     def validate(self, context: ValidationContext) -> RuleResult:
-        if is_monitoring_only(context.scenario_text):
-            return self.not_applicable("当前场景明确为纯监测，不执行互斥输出动作。")
+        if not has_controlled_device(context, ACTUATOR_KINDS):
+            return self.not_applicable("当前场景未识别到受控的互斥输出设备。")
         applicability_text = f"{context.scenario_text}\n{context.plan_text}"
         pairs = applicable_exclusive_pairs(applicability_text)
         if contains_any(context.scenario_text, GENERIC_EXCLUSIVE_TERMS):
@@ -349,43 +545,34 @@ class MutualInterlockMissingRule(ValidationRule):
         if not pairs:
             return self.not_applicable("当前场景未识别到明确的互斥动作对。")
 
-        uncovered: list[str] = []
-        for label, left_terms, right_terms in EXCLUSIVE_ACTION_PAIRS:
-            if label not in pairs:
-                continue
-            covered = terms_cooccur(
-                context.plan_text,
-                left_terms,
-                right_terms,
-                INTERLOCK_TERMS,
-            ) or terms_follow_condition(
-                context.plan_text,
-                (left_terms, right_terms),
-                INTERLOCK_TERMS,
-            )
-            compound_terms = EXCLUSIVE_ACTION_COMPOUND_TERMS.get(label, ())
-            covered = covered or (
-                bool(compound_terms)
-                and terms_cooccur(
-                    context.plan_text,
-                    compound_terms,
-                    INTERLOCK_TERMS,
+        scopes = multi_device_scopes(context, ACTUATOR_KINDS)
+        if scopes:
+            failures = []
+            for scope in scopes:
+                scoped_pairs = applicable_exclusive_pairs(
+                    f"{scope.scenario_text}\n{scope.plan_text}"
                 )
+                if contains_any(scope.scenario_text, GENERIC_EXCLUSIVE_TERMS):
+                    scoped_pairs.append("互斥输出")
+                if not scoped_pairs:
+                    continue
+                missing = _interlock_uncovered(scope.plan_text, scoped_pairs)
+                failures.append((scope.device.label, missing))
+            failures = [
+                (device, missing)
+                for device, missing in failures
+                if missing
+            ]
+            if not failures:
+                return self.passed("各设备的互斥动作均有明确互锁说明。")
+            return self.result(
+                status=RuleStatus.FAILED,
+                message="部分设备的互斥输出缺少明确联锁保护。",
+                evidence=_instance_failure_evidence(failures),
+                recommendation="逐台增加硬件和程序双重互锁，禁止互斥输出同时有效。",
+                related_items=_instance_failure_devices(failures),
             )
-            if not covered:
-                uncovered.append(label)
-        if "互斥输出" in pairs:
-            generic_covered = terms_cooccur(
-                context.plan_text,
-                GENERIC_EXCLUSIVE_TERMS,
-                INTERLOCK_TERMS,
-            ) or terms_follow_condition(
-                context.plan_text,
-                (GENERIC_EXCLUSIVE_TERMS,),
-                INTERLOCK_TERMS,
-            )
-            if not generic_covered:
-                uncovered.append("互斥输出")
+        uncovered = _interlock_uncovered(context.plan_text, pairs)
         if not uncovered:
             return self.passed("互斥动作均有明确的互锁说明。")
         return self.result(
@@ -404,15 +591,42 @@ class ActuatorFeedbackMissingRule(ValidationRule):
     default_severity = Severity.MEDIUM
 
     def validate(self, context: ValidationContext) -> RuleResult:
-        if is_monitoring_only(context.scenario_text):
-            return self.not_applicable("当前场景明确为纯监测，不负责执行器动作确认。")
-        if not contains_any(context.scenario_text, ACTUATOR_TERMS):
+        if not has_controlled_device(context, ACTUATOR_KINDS):
             return self.not_applicable("当前场景未识别到需要状态确认的重要执行器。")
 
+        scopes = multi_device_scopes(context, ACTUATOR_KINDS)
+        if scopes:
+            missing_devices = [
+                scope.device.label
+                for scope in scopes
+                if not contains_any_affirmed(scope.plan_text, FEEDBACK_TERMS)
+            ]
+            if not missing_devices:
+                return self.passed("方案包含各重要执行器的运行、故障或到位反馈。")
+            return self.result(
+                status=RuleStatus.WARNING,
+                message="部分重要执行器缺少明确反馈信号。",
+                evidence=[f"{device}缺少反馈" for device in missing_devices],
+                recommendation="逐台增加运行、故障或到位反馈，并用于状态确认。",
+                related_items=missing_devices,
+            )
         device_groups = [
             (label, terms)
-            for label, terms in FEEDBACK_DEVICE_GROUPS
-            if contains_any(context.scenario_text, terms)
+            for (label, terms), kind in zip(
+                FEEDBACK_DEVICE_GROUPS,
+                (
+                    "motor",
+                    "pump",
+                    "fan",
+                    "compressor",
+                    "valve",
+                    "conveyor",
+                    "lift",
+                    "cylinder",
+                ),
+                strict=True,
+            )
+            if has_controlled_device(context, (kind,))
         ]
         missing = [
             label
@@ -446,20 +660,66 @@ class AlarmCoverageIncompleteRule(ValidationRule):
     default_severity = Severity.MEDIUM
 
     def validate(self, context: ValidationContext) -> RuleResult:
-        expectations: list[tuple[str, tuple[str, ...]]] = []
         scenario = context.scenario_text
+        scopes = multi_device_scopes(context, ACTUATOR_KINDS)
+        if scopes:
+            failures: list[tuple[str, list[str]]] = []
+            for scope in scopes:
+                expectations: list[tuple[str, tuple[str, ...]]] = []
+                if contains_any_affirmed(
+                    scope.scenario_text,
+                    EMERGENCY_STOP_TERMS,
+                ):
+                    expectations.append(("急停", EMERGENCY_STOP_TERMS))
+                if scope.device.kind in MOTOR_KINDS:
+                    expectations.append(("过载", OVERLOAD_EVENT_TERMS))
+                if (
+                    scope.device.kind == "pump"
+                    and contains_any(scope.scenario_text, WATER_SYSTEM_TERMS)
+                ):
+                    expectations.append(("液位异常", LEVEL_ABNORMAL_TERMS))
+                expectations.extend(
+                    (
+                        ("执行器故障", ACTUATOR_FAULT_TERMS),
+                        ("反馈异常", FEEDBACK_ABNORMAL_TERMS),
+                    )
+                )
+                if scope.device.kind in TIMEOUT_KINDS:
+                    expectations.append(("动作超时", TIMEOUT_EVENT_TERMS))
+                missing = [
+                    label
+                    for label, condition_terms in expectations
+                    if not terms_near(
+                        scope.plan_text,
+                        condition_terms,
+                        ALARM_TERMS,
+                    )
+                ]
+                if missing:
+                    failures.append((scope.device.label, missing))
+            if not failures:
+                return self.passed("各设备的重要异常均有对应报警说明。")
+            return self.result(
+                status=RuleStatus.WARNING,
+                message="部分设备未覆盖全部相关报警。",
+                evidence=_instance_failure_evidence(failures),
+                recommendation="逐台补充缺失异常的报警触发、保持和复位说明。",
+                related_items=_instance_failure_devices(failures),
+            )
+
+        expectations: list[tuple[str, tuple[str, ...]]] = []
         if contains_any(scenario, EMERGENCY_STOP_TERMS):
             expectations.append(("急停", EMERGENCY_STOP_TERMS))
-        if contains_any(scenario, MOTOR_TERMS):
+        if has_controlled_device(context, MOTOR_KINDS):
             expectations.append(("过载", OVERLOAD_EVENT_TERMS))
         if contains_any(scenario, WATER_SYSTEM_TERMS):
             expectations.append(("液位异常", LEVEL_ABNORMAL_TERMS))
         if contains_any(scenario, SENSOR_TERMS):
             expectations.append(("传感器异常", SENSOR_FAULT_TERMS))
-        if contains_any(scenario, ACTUATOR_TERMS):
+        if has_controlled_device(context, ACTUATOR_KINDS):
             expectations.append(("执行器故障", ACTUATOR_FAULT_TERMS))
             expectations.append(("反馈异常", FEEDBACK_ABNORMAL_TERMS))
-        if contains_any(scenario, TIMEOUT_ACTUATOR_TERMS):
+        if has_controlled_device(context, TIMEOUT_KINDS):
             expectations.append(("动作超时", TIMEOUT_EVENT_TERMS))
         if not expectations:
             return self.not_applicable("当前场景未识别到需要报警覆盖的异常类型。")
@@ -488,26 +748,24 @@ class PumpDryRunProtectionMissingRule(ValidationRule):
 
     def validate(self, context: ValidationContext) -> RuleResult:
         scenario = context.scenario_text
-        if is_monitoring_only(scenario):
-            return self.not_applicable("当前场景明确为纯监测，不负责水泵防干转控制。")
-        if not (contains_any(scenario, PUMP_TERMS) and contains_any(scenario, WATER_SYSTEM_TERMS)):
+        if not (
+            has_controlled_device(context, PUMP_KINDS)
+            and contains_any(scenario, WATER_SYSTEM_TERMS)
+        ):
             return self.not_applicable("当前场景不是包含水泵及液位条件的供液系统。")
-        checks = {
-            "低液位或缺水检测": contains_any_affirmed(context.plan_text, LOW_LEVEL_TERMS),
-            "防干转逻辑": contains_any_affirmed(context.plan_text, DRY_RUN_TERMS)
-            or terms_near(
-                context.plan_text,
-                LOW_LEVEL_TERMS,
-                START_INHIBIT_TERMS,
-            ),
-            "缺水停泵": terms_near(context.plan_text, LOW_LEVEL_TERMS, STOP_TERMS)
-            or terms_near(
-                context.plan_text,
-                LOW_LEVEL_TERMS,
-                START_INHIBIT_TERMS,
-            ),
-            "缺水报警": terms_near(context.plan_text, LOW_LEVEL_TERMS, ALARM_TERMS),
-        }
+        scopes = multi_device_scopes(context, PUMP_KINDS)
+        if scopes:
+            failures = _instance_failures(scopes, _dry_run_checks)
+            if not failures:
+                return self.passed("各水泵均包含低液位检测、防干转、停泵和报警。")
+            return self.result(
+                status=RuleStatus.FAILED,
+                message="部分水泵的防干转保护链路不完整。",
+                evidence=_instance_failure_evidence(failures),
+                recommendation="逐台增加低液位或缺水检测，并联动停泵、防干转和报警。",
+                related_items=_instance_failure_devices(failures),
+            )
+        checks = _dry_run_checks(context.plan_text)
         missing = [name for name, present in checks.items() if not present]
         if not missing:
             return self.passed("方案包含低液位检测、防干转、停泵和报警。")
@@ -527,24 +785,21 @@ class ActionTimeoutProtectionMissingRule(ValidationRule):
     default_severity = Severity.HIGH
 
     def validate(self, context: ValidationContext) -> RuleResult:
-        if is_monitoring_only(context.scenario_text):
-            return self.not_applicable("当前场景明确为纯监测，不执行需要到位确认的动作。")
-        if not contains_any(context.scenario_text, TIMEOUT_ACTUATOR_TERMS):
+        if not has_controlled_device(context, TIMEOUT_KINDS):
             return self.not_applicable("当前场景未识别到需要到位确认的阀门或运动机构。")
-        checks = {
-            "动作计时": contains_any_affirmed(context.plan_text, TIMER_TERMS)
-            or contains_any_affirmed(
-                context.plan_text,
-                DEADLINE_NOT_REACHED_TERMS,
-            ),
-            "到位超时判断": contains_any_affirmed(context.plan_text, TIMEOUT_TERMS)
-            or contains_any_affirmed(
-                context.plan_text,
-                DEADLINE_NOT_REACHED_TERMS,
-            ),
-            "超时停止": terms_near(context.plan_text, TIMEOUT_EVENT_TERMS, STOP_TERMS),
-            "超时报警": terms_near(context.plan_text, TIMEOUT_EVENT_TERMS, ALARM_TERMS),
-        }
+        scopes = multi_device_scopes(context, TIMEOUT_KINDS)
+        if scopes:
+            failures = _instance_failures(scopes, _timeout_checks)
+            if not failures:
+                return self.passed("各设备均包含动作计时、超时判断、停止和报警。")
+            return self.result(
+                status=RuleStatus.FAILED,
+                message="部分设备缺少完整动作超时保护。",
+                evidence=_instance_failure_evidence(failures),
+                recommendation="逐台增加动作定时、到位超时判断，并联动停止和报警。",
+                related_items=_instance_failure_devices(failures),
+            )
+        checks = _timeout_checks(context.plan_text)
         missing = [name for name, present in checks.items() if not present]
         if not missing:
             return self.passed("方案包含动作计时、超时判断、停止和报警。")
@@ -564,23 +819,43 @@ class ModeInterlockMissingRule(ValidationRule):
     default_severity = Severity.HIGH
 
     def validate(self, context: ValidationContext) -> RuleResult:
-        if is_monitoring_only(context.scenario_text):
-            return self.not_applicable("当前场景明确为纯监测，不执行自动/手动输出控制。")
+        if not has_controlled_device(context, ACTUATOR_KINDS):
+            return self.not_applicable("当前场景未识别到受控的自动/手动输出设备。")
         applicability_text = f"{context.scenario_text}\n{context.plan_text}"
         if not (
             contains_any(applicability_text, AUTO_TERMS)
             and contains_any(applicability_text, MANUAL_TERMS)
         ):
             return self.not_applicable("当前场景未同时定义自动和手动模式。")
-        checks = {
-            "模式选择或切换": contains_any_affirmed(context.plan_text, MODE_SELECT_TERMS),
-            "模式互锁": contains_any_affirmed(context.plan_text, INTERLOCK_TERMS),
-            "手动权限": contains_any_affirmed(context.plan_text, MANUAL_AUTHORITY_TERMS),
-            "禁止同时生效": contains_any_affirmed(
-                context.plan_text,
-                NO_SIMULTANEOUS_TERMS,
-            ),
-        }
+        scopes = multi_device_scopes(context, ACTUATOR_KINDS)
+        if scopes:
+            applicable_scopes = tuple(
+                scope
+                for scope in scopes
+                if (
+                    contains_any(
+                        f"{scope.scenario_text}\n{scope.plan_text}",
+                        AUTO_TERMS,
+                    )
+                    and contains_any(
+                        f"{scope.scenario_text}\n{scope.plan_text}",
+                        MANUAL_TERMS,
+                    )
+                )
+            )
+            if not applicable_scopes:
+                return self.not_applicable("当前场景未为具体设备同时定义自动和手动模式。")
+            failures = _instance_failures(applicable_scopes, _mode_checks)
+            if not failures:
+                return self.passed("各设备的自动/手动模式切换、权限和互锁说明完整。")
+            return self.result(
+                status=RuleStatus.FAILED,
+                message="部分设备的自动/手动模式缺少互锁或权限约束。",
+                evidence=_instance_failure_evidence(failures),
+                recommendation="逐台增加唯一模式选择、互锁条件和手动操作权限控制。",
+                related_items=_instance_failure_devices(failures),
+            )
+        checks = _mode_checks(context.plan_text)
         missing = [name for name, present in checks.items() if not present]
         if not missing:
             return self.passed("自动/手动模式切换、权限和互锁说明完整。")
@@ -600,9 +875,7 @@ class SafeStateUndefinedRule(ValidationRule):
     default_severity = Severity.CRITICAL
 
     def validate(self, context: ValidationContext) -> RuleResult:
-        if is_monitoring_only(context.scenario_text):
-            return self.not_applicable("当前场景明确为纯监测，不控制重要输出。")
-        if not contains_any(context.scenario_text, ACTUATOR_TERMS):
+        if not has_controlled_device(context, ACTUATOR_KINDS):
             return self.not_applicable("当前场景未识别到需要定义安全状态的重要输出。")
 
         safe_context_terms = FAULT_TERMS + SAFE_STATE_TERMS
@@ -616,10 +889,47 @@ class SafeStateUndefinedRule(ValidationRule):
             GLOBAL_SAFE_OUTPUT_ACTION_TERMS,
             forbidden_detail_terms=NORMAL_OPERATION_TERMS,
         )
+        scopes = multi_device_scopes(context, ACTUATOR_KINDS)
+        if scopes:
+            if has_global_safe_action:
+                return self.passed("方案为所有重要输出定义了故障安全状态。")
+            missing_devices = [
+                scope.device.label
+                for scope in scopes
+                if not _safe_scope_covered(
+                    scope.plan_text,
+                    scope.device.kind,
+                )
+            ]
+            if not missing_devices:
+                return self.passed("方案逐台定义了故障、停机或急停状态下的安全输出动作。")
+            return self.result(
+                status=RuleStatus.FAILED,
+                message="部分重要输出的故障安全状态不明确。",
+                evidence=[
+                    f"{device}未定义安全状态"
+                    for device in missing_devices
+                ],
+                recommendation="逐台定义重要输出在故障、停机或急停时的安全动作。",
+                related_items=missing_devices,
+            )
         applicable_groups = [
             (label, scenario_terms, action_terms)
-            for label, scenario_terms, action_terms in SAFE_OUTPUT_DEVICE_GROUPS
-            if contains_any(context.scenario_text, scenario_terms)
+            for (label, scenario_terms, action_terms), kind in zip(
+                SAFE_OUTPUT_DEVICE_GROUPS,
+                (
+                    "motor",
+                    "pump",
+                    "fan",
+                    "heater",
+                    "valve",
+                    "conveyor",
+                    "lift",
+                    "cylinder",
+                ),
+                strict=True,
+            )
+            if has_controlled_device(context, (kind,))
         ]
         uncovered: list[str] = []
         for label, scenario_terms, action_terms in applicable_groups:
