@@ -191,3 +191,32 @@ def test_intermediate_skill_exception() -> None:
 
     with pytest.raises(SkillExecutionError):
         generate_control_plan(_generate_request(), MissingFieldLLM())
+
+def test_non_object_io_row_raises_format_error() -> None:
+    from backend.agent_core import _normalize_io_table
+    from backend.errors import SkillExecutionError
+
+    with pytest.raises(SkillExecutionError, match="non-object I/O row"):
+        _normalize_io_table([{"address": "I0.0", "signal_name": "ok"}, None, {"address": "I0.1"}])
+
+
+def test_non_dict_io_row_raises_format_error() -> None:
+    from backend.agent_core import _normalize_io_table
+    from backend.errors import SkillExecutionError
+
+    with pytest.raises(SkillExecutionError, match="non-object I/O row"):
+        _normalize_io_table(["not_a_dict", {"address": "I0.0", "signal_name": "ok"}])
+
+
+def test_parse_json_handles_full_content_first() -> None:
+    from backend.agent_core import _parse_json_object
+
+    payload = _parse_json_object('{"requirement_analysis": "test", "io_table": [], "control_logic": "cl", "safety_design": "sd", "ladder_idea": "li", "report_markdown": "rm"}')
+    assert payload["requirement_analysis"] == "test"
+
+
+def test_parse_json_fallback_bracket_extraction() -> None:
+    from backend.agent_core import _parse_json_object
+
+    payload = _parse_json_object('some text {"key": "value"} more text')
+    assert payload["key"] == "value"
