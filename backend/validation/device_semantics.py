@@ -147,6 +147,15 @@ _UNCONTROLLED_AFTER_RE = re.compile(
     r"monitor(?:ed|ing)?\s+only)\b)",
     re.IGNORECASE,
 )
+_PARENTHESIZED_UNCONTROLLED_AFTER_RE = re.compile(
+    r"[(（]\s*(?:不参与控制|不受控制|不控制|不驱动|无需控制|不需要控制|"
+    r"仅监测|只监测|仅用于监测|只用于监测|用于监测|"
+    r"进行监测|状态监测|状态采集|"
+    r"\b(?:not\s+controlled|monitor(?:ing)?\s+only|only\s+monitor(?:ing)?)"
+    r")\s*[)）]",
+    re.IGNORECASE,
+)
+
 _CAPABILITY_SUFFIX_RE = re.compile(
     r"^(?:的)?(?:"
     r"过载|保护|故障|报警|告警|反馈|急停|互锁|联锁|超时|计时|"
@@ -320,6 +329,9 @@ def _mention_state(text: str, start: int, end: int) -> DeviceState:
     if _UNCONTROLLED_BEFORE_RE.search(before):
         return DeviceState.PRESENT_UNCONTROLLED
     if _UNCONTROLLED_AFTER_RE.match(after):
+        return DeviceState.PRESENT_UNCONTROLLED
+    after_short = after[:30]
+    if _PARENTHESIZED_UNCONTROLLED_AFTER_RE.search(after_short):
         return DeviceState.PRESENT_UNCONTROLLED
     absence_after = _ENTITY_ABSENCE_AFTER_RE.match(after)
     if absence_after:
@@ -581,7 +593,7 @@ def controlled_device_instances(
     kinds: Iterable[str],
 ) -> tuple[DeviceInstance, ...]:
     requested_kinds = tuple(kinds)
-    source_texts = _scenario_texts(context) + _strong_output_texts(context)
+    source_texts = _scenario_texts(context) + _strong_output_texts(context) + ((context.scenario_text,) if context.scenario_text else ())
     states_by_key: dict[str, list[DeviceState]] = {}
     instances_by_key: dict[str, DeviceInstance] = {}
     order: list[str] = []
