@@ -23,7 +23,11 @@ def test_health_and_cors(client: TestClient) -> None:
     response = client.get("/health", headers={"Origin": LOCAL_FRONTEND_ORIGIN})
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    data = response.json()
+    assert data["status"] == "ok"
+    assert "version" in data
+    assert "model" in data
+    assert "model_configured" in data
     assert response.headers["access-control-allow-origin"] == LOCAL_FRONTEND_ORIGIN
 
 

@@ -7,6 +7,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 import threading
 
@@ -19,14 +20,14 @@ if __package__:
     from .agent_core import AgentCoreError, generate_control_plan, optimize_control_plan
     from .errors import AppError, LLMResponseFormatError, LLMTimeoutError, WorkflowExecutionError
     from .llm_client import DeepSeekLLMClient, LLMClientError
-    from .observability import get_request_id, set_request_id
+    from .observability import get_request_id, set_request_id, setup_logging
     from .schemas import ErrorResponse, GenerateRequest, GenerateResponse, OptimizeRequest, OptimizeResponse
 else:
     from agent_core import AgentCoreError, generate_control_plan, optimize_control_plan
     from traffic_control import RateLimitExceeded, ConcurrencyLimitExceeded, RequestTimeoutExceeded, acquire_request, release_request
     from errors import AppError, LLMResponseFormatError, LLMTimeoutError, WorkflowExecutionError
     from llm_client import DeepSeekLLMClient, LLMClientError
-    from observability import get_request_id, set_request_id
+    from observability import get_request_id, set_request_id, setup_logging
     from schemas import ErrorResponse, GenerateRequest, GenerateResponse, OptimizeRequest, OptimizeResponse
 
 
@@ -58,14 +59,27 @@ def _allowed_origins() -> list[str]:
     return origins
 
 
-def get_llm_client() -> DeepSeekLLMClient:
-    load_dotenv(PROJECT_ENV_FILE)
-    return DeepSeekLLMClient()
+def get_llm_client(request: Request) -> DeepSeekLLMClient:
+    return request.app.state.llm_client
 
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> None:
+    project_env = Path(__file__).resolve().parent.parent / ".env"
+    load_dotenv(project_env)
+    try:
+        app.state.llm_client = DeepSeekLLMClient()
+    except Exception:
+        app.state.llm_client = None
+    log_level = os.getenv("LOG_LEVEL", "INFO")
+    setup_logging(log_level)
+    yield
 
 app = FastAPI(
     title="基于大模型的工业控制方案设计 Agent 系统 API",
     version="1.0.0",
+    lifespan=lifespan,
 )
 app.add_middleware(
     CORSMiddleware,
@@ -126,10 +140,14 @@ async def rate_limit_handler(_: Request, exc: RateLimitExceeded) -> JSONResponse
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
-
-
+def health(request: Request) -> dict:
+    client = request.app.state.llm_client
+    return {
+        "status": "ok",
+        "version": "1.0.0",
+        "model": getattr(client, "model", "deepseek-chat") if client else "deepseek-chat",
+        "model_configured": client is not None and getattr(client, "client", None) is not None,
+    }
 @app.get("/examples")
 def examples() -> dict[str, list[dict[str, str]]]:
     return {
