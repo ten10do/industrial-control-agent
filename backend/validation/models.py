@@ -9,6 +9,7 @@ class RuleStatus(str, Enum):
     WARNING = "warning"
     FAILED = "failed"
     NOT_APPLICABLE = "not_applicable"
+    ERROR = "error"
 
 
 class Severity(str, Enum):
@@ -31,6 +32,7 @@ class ValidationStatus(str, Enum):
     COMPLETE = "complete"
     PARTIAL = "partial"
     UNAVAILABLE = "unavailable"
+    INSUFFICIENT_DATA = "insufficient_data"
 
 
 class ValidationIOPoint(BaseModel):
@@ -88,6 +90,9 @@ class ValidationReport(BaseModel):
     warning_rules: int = Field(ge=0)
     failed_rules: int = Field(ge=0)
     not_applicable_rules: int = Field(ge=0)
+    error_rules: int = Field(ge=0, default=0)
+    applicable_rules: int = Field(ge=0, default=0)
+    coverage_ratio: float = Field(ge=0.0, le=1.0, default=0.0)
     critical_count: int = Field(ge=0)
     high_count: int = Field(ge=0)
     medium_count: int = Field(ge=0)
