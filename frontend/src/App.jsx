@@ -62,8 +62,12 @@ function App() {
       } catch {
         setExamples([]);
       }
-    } catch {
-      setBackendStatus("offline");
+    } catch (err) {
+      if (err.name === "ApiRequestError" && err.status === 408) {
+        setBackendStatus("warming_up");
+      } else {
+        setBackendStatus("offline");
+      }
     }
   }, []);
 

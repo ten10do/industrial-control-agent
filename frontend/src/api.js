@@ -18,6 +18,9 @@ function errorMessageForStatus(status) {
   if (status === 422) {
     return "输入信息不完整或格式不正确，请检查后重试。";
   }
+  if (status === 429) {
+    return "请求过于频繁，请等待一分钟后再试。";
+  }
   if (status === 502 || status === 503 || status === 504) {
     return "模型服务暂时不可用，请稍后重试。";
   }
@@ -73,8 +76,24 @@ async function request(path, options = {}) {
 }
 
 
-export function checkHealth() {
-  return request("/health", { timeoutMs: 5000 });
+export async function checkHealth({ maxRetries = 3, baseDelayMs = 2000 } = {}) {
+  let lastError = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const result = await request("/health", {
+        timeoutMs: attempt === 0 ? 5000 : 15000,
+      });
+      return result;
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxRetries) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, baseDelayMs * Math.pow(2, attempt))
+        );
+      }
+    }
+  }
+  throw lastError;
 }
 
 

@@ -7,5 +7,5 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM"]
 ignore = ["E501"]
 
 [tool.pytest.ini_options]
-addopts = "-q"
+addopts = "--cov=backend --cov-report=term --cov-fail-under=70 -q"
 testpaths = ["backend/tests"]
