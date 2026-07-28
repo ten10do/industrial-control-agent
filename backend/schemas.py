@@ -57,3 +57,15 @@ class ErrorResponse(BaseModel):
     message: str
     detail: Optional[str] = None
     request_id: Optional[str] = None
+
+class ValidateRequest(RequestModel):
+    plan_text: str = Field(min_length=1, max_length=100000)
+    control_object: str = Field(default="", max_length=4000)
+    input_devices: str = Field(default="", max_length=6000)
+    output_devices: str = Field(default="", max_length=6000)
+    control_requirements: str = Field(default="", max_length=10000)
+    scenario_text: str = Field(default="", max_length=20000)
+
+
+class ValidateResponse(BaseModel):
+    validation_report: ValidationReport

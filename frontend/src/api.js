@@ -97,3 +97,10 @@ export function optimizeControlPlan(payload) {
     body: JSON.stringify(payload),
   });
 }
+export function validatePlan(payload) {
+  return request("/validate", {
+    method: "POST",
+    body: JSON.stringify(payload),
+    timeoutMs: 30000,
+  });
+}
