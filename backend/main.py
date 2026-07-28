@@ -7,6 +7,13 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+import threading
+
+try:
+    from .traffic_control import RateLimitExceeded, ConcurrencyLimitExceeded, RequestTimeoutExceeded, acquire_request, release_request
+except ImportError:
+    from traffic_control import RateLimitExceeded, ConcurrencyLimitExceeded, RequestTimeoutExceeded, acquire_request, release_request
 
 if __package__:
     from .agent_core import AgentCoreError, generate_control_plan, optimize_control_plan
@@ -16,6 +23,7 @@ if __package__:
     from .schemas import ErrorResponse, GenerateRequest, GenerateResponse, OptimizeRequest, OptimizeResponse
 else:
     from agent_core import AgentCoreError, generate_control_plan, optimize_control_plan
+    from traffic_control import RateLimitExceeded, ConcurrencyLimitExceeded, RequestTimeoutExceeded, acquire_request, release_request
     from errors import AppError, LLMResponseFormatError, LLMTimeoutError, WorkflowExecutionError
     from llm_client import DeepSeekLLMClient, LLMClientError
     from observability import get_request_id, set_request_id
@@ -108,6 +116,15 @@ async def validation_error_handler(_: Request, __: RequestValidationError) -> JS
         headers={"X-Request-ID": get_request_id() or ""},
     )
 
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(_: Request, exc: RateLimitExceeded) -> JSONResponse:
+    return JSONResponse(
+        status_code=429,
+        content=_error_payload("RATE_LIMITED", "请求过于频繁，请稍后重试。", str(exc)),
+        headers={"X-Request-ID": get_request_id() or "", "Retry-After": "60"},
+    )
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -152,12 +169,23 @@ def examples() -> dict[str, list[dict[str, str]]]:
 @app.post(
     "/generate",
     response_model=GenerateResponse,
-    responses={422: {"model": ErrorResponse}, 502: {"model": ErrorResponse}},
+    responses={422: {"model": ErrorResponse}, 429: {"model": ErrorResponse}, 502: {"model": ErrorResponse}},
 )
 def generate(
     request: GenerateRequest,
     llm_client: DeepSeekLLMClient = Depends(get_llm_client),
 ) -> GenerateResponse:
+    http_request = _get_current_request()
+    client_ip = http_request.client.host if http_request and http_request.client else ""
+    x_forwarded = http_request.headers.get("X-Forwarded-For", "") if http_request else ""
+    acquire_request(client_ip, x_forwarded)
+    try:
+        return _run_with_timeout(lambda: _do_generate(request, llm_client), 110.0)
+    finally:
+        release_request()
+
+
+def _do_generate(request: GenerateRequest, llm_client: DeepSeekLLMClient) -> GenerateResponse:
     try:
         return generate_control_plan(request, llm_client, request_id=get_request_id())
     except (LLMTimeoutError, LLMResponseFormatError, WorkflowExecutionError):
@@ -170,15 +198,40 @@ def generate(
         raise APIServiceError("控制方案生成失败", "服务内部错误") from exc
 
 
+def _run_with_timeout(fn, timeout_seconds: float):
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+    rid = get_request_id()
+    def _wrapped():
+        if rid:
+            set_request_id(rid)
+        return fn()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(_wrapped)
+        try:
+            return future.result(timeout=timeout_seconds)
+        except FutureTimeoutError:
+            raise RequestTimeoutExceeded(f"Request timed out after {timeout_seconds:.0f}s")
+
 @app.post(
     "/optimize",
     response_model=OptimizeResponse,
-    responses={422: {"model": ErrorResponse}, 502: {"model": ErrorResponse}},
+    responses={422: {"model": ErrorResponse}, 429: {"model": ErrorResponse}, 502: {"model": ErrorResponse}},
 )
 def optimize(
     request: OptimizeRequest,
     llm_client: DeepSeekLLMClient = Depends(get_llm_client),
 ) -> OptimizeResponse:
+    http_request = _get_current_request()
+    client_ip = http_request.client.host if http_request and http_request.client else ""
+    x_forwarded = http_request.headers.get("X-Forwarded-For", "") if http_request else ""
+    acquire_request(client_ip, x_forwarded)
+    try:
+        return _run_with_timeout(lambda: _do_optimize(request, llm_client), 110.0)
+    finally:
+        release_request()
+
+
+def _do_optimize(request: OptimizeRequest, llm_client: DeepSeekLLMClient) -> OptimizeResponse:
     try:
         return optimize_control_plan(request, llm_client, request_id=get_request_id())
     except (LLMTimeoutError, LLMResponseFormatError, WorkflowExecutionError):
@@ -189,3 +242,16 @@ def optimize(
         raise APIServiceError("控制方案优化失败", str(exc)) from exc
     except Exception as exc:
         raise APIServiceError("控制方案优化失败", "服务内部错误") from exc
+
+_current_request_ctx = threading.local()
+
+
+def _get_current_request() -> Request | None:
+    return getattr(_current_request_ctx, "request", None)
+
+
+@app.middleware("http")
+async def _capture_request_middleware(request: Request, call_next):
+    _current_request_ctx.request = request
+    response = await call_next(request)
+    return response

@@ -29,7 +29,7 @@ function errorMessageForStatus(status) {
 
 
 async function request(path, options = {}) {
-  const { timeoutMs = 120000, ...fetchOptions } = options;
+  const { timeoutMs = 110000, ...fetchOptions } = options;
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
 
