@@ -1,5 +1,7 @@
 import os
 import uuid
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -7,22 +9,34 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 if __package__:
-    from .agent_core import AgentCoreError, generate_control_plan, optimize_control_plan
-    from .errors import AppError, LLMResponseFormatError, LLMTimeoutError, WorkflowExecutionError
-    from .llm_client import DeepSeekLLMClient, LLMClientError
-    from .observability import get_request_id, set_request_id
+    from .agent_core import generate_control_plan, optimize_control_plan
+    from .errors import AppError
+    from .llm_client import DeepSeekLLMClient, LLMClient, LLMClientError
+    from .observability import get_request_id, log_workflow_event, set_request_id
     from .schemas import ErrorResponse, GenerateRequest, GenerateResponse, OptimizeRequest, OptimizeResponse
+    from .traffic_guard import (
+        ModelAPITrafficGuard,
+        TrafficGuardLease,
+        TrafficGuardSettings,
+    )
 else:
-    from agent_core import AgentCoreError, generate_control_plan, optimize_control_plan
-    from errors import AppError, LLMResponseFormatError, LLMTimeoutError, WorkflowExecutionError
-    from llm_client import DeepSeekLLMClient, LLMClientError
-    from observability import get_request_id, set_request_id
+    from agent_core import generate_control_plan, optimize_control_plan
+    from errors import AppError
+    from llm_client import DeepSeekLLMClient, LLMClient, LLMClientError
+    from observability import get_request_id, log_workflow_event, set_request_id
     from schemas import ErrorResponse, GenerateRequest, GenerateResponse, OptimizeRequest, OptimizeResponse
+    from traffic_guard import (
+        ModelAPITrafficGuard,
+        TrafficGuardLease,
+        TrafficGuardSettings,
+    )
 
 
 PROJECT_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+bearer_scheme = HTTPBearer(auto_error=False)
 
 
 class APIServiceError(RuntimeError):
@@ -50,14 +64,61 @@ def _allowed_origins() -> list[str]:
     return origins
 
 
-def get_llm_client() -> DeepSeekLLMClient:
+@asynccontextmanager
+async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     load_dotenv(PROJECT_ENV_FILE)
-    return DeepSeekLLMClient()
+    application.state.model_api_guard = ModelAPITrafficGuard(
+        TrafficGuardSettings.from_env(),
+    )
+    yield
+
+
+def get_model_api_guard(request: Request) -> ModelAPITrafficGuard:
+    return request.app.state.model_api_guard
+
+
+def get_llm_client() -> Callable[[], DeepSeekLLMClient]:
+    return DeepSeekLLMClient
+
+
+@contextmanager
+def guarded_llm_client(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None,
+    guard: ModelAPITrafficGuard,
+    client_provider: LLMClient | Callable[[], LLMClient],
+) -> Iterator[LLMClient]:
+    access_token = credentials.credentials if credentials is not None else None
+    client_id = request.client.host if request.client is not None else "unknown"
+    lease: TrafficGuardLease = guard.acquire(client_id, access_token)
+    client: LLMClient | None = None
+    try:
+        client = client_provider() if callable(client_provider) else client_provider
+        yield client
+    finally:
+        try:
+            close = getattr(client, "close", None)
+            if callable(close):
+                close()
+        except Exception as exc:
+            try:
+                log_workflow_event(
+                    request_id=get_request_id(),
+                    workflow_name="llm_client",
+                    step_name="close",
+                    status="error",
+                    error_type=type(exc).__name__,
+                )
+            except Exception:
+                pass
+        finally:
+            lease.release()
 
 
 app = FastAPI(
     title="基于大模型的工业控制方案设计 Agent 系统 API",
     version="1.0.0",
+    lifespan=lifespan,
 )
 app.add_middleware(
     CORSMiddleware,
@@ -65,7 +126,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "X-Request-ID"],
-    expose_headers=["X-Request-ID"],
+    expose_headers=["Retry-After", "WWW-Authenticate", "X-Request-ID"],
 )
 
 
@@ -80,10 +141,14 @@ async def request_id_middleware(request: Request, call_next):
 
 @app.exception_handler(AppError)
 async def app_error_handler(_: Request, exc: AppError) -> JSONResponse:
+    headers = {
+        **exc.headers,
+        "X-Request-ID": get_request_id() or "",
+    }
     return JSONResponse(
         status_code=exc.status_code,
         content=_error_payload(exc.code, exc.message, exc.detail),
-        headers={"X-Request-ID": get_request_id() or ""},
+        headers=headers,
     )
 
 
@@ -152,19 +217,36 @@ def examples() -> dict[str, list[dict[str, str]]]:
 @app.post(
     "/generate",
     response_model=GenerateResponse,
-    responses={422: {"model": ErrorResponse}, 502: {"model": ErrorResponse}},
+    responses={
+        401: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
+        429: {"model": ErrorResponse},
+        502: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
 )
 def generate(
     request: GenerateRequest,
-    llm_client: DeepSeekLLMClient = Depends(get_llm_client),
+    http_request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    guard: ModelAPITrafficGuard = Depends(get_model_api_guard),
+    llm_client_provider=Depends(get_llm_client),
 ) -> GenerateResponse:
     try:
-        return generate_control_plan(request, llm_client, request_id=get_request_id())
-    except (LLMTimeoutError, LLMResponseFormatError, WorkflowExecutionError):
+        with guarded_llm_client(
+            http_request,
+            credentials,
+            guard,
+            llm_client_provider,
+        ) as llm_client:
+            return generate_control_plan(
+                request,
+                llm_client,
+                request_id=get_request_id(),
+            )
+    except AppError:
         raise
     except LLMClientError as exc:
-        raise APIServiceError("控制方案生成失败", str(exc)) from exc
-    except AgentCoreError as exc:
         raise APIServiceError("控制方案生成失败", str(exc)) from exc
     except Exception as exc:
         raise APIServiceError("控制方案生成失败", "服务内部错误") from exc
@@ -173,19 +255,36 @@ def generate(
 @app.post(
     "/optimize",
     response_model=OptimizeResponse,
-    responses={422: {"model": ErrorResponse}, 502: {"model": ErrorResponse}},
+    responses={
+        401: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
+        429: {"model": ErrorResponse},
+        502: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
 )
 def optimize(
     request: OptimizeRequest,
-    llm_client: DeepSeekLLMClient = Depends(get_llm_client),
+    http_request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    guard: ModelAPITrafficGuard = Depends(get_model_api_guard),
+    llm_client_provider=Depends(get_llm_client),
 ) -> OptimizeResponse:
     try:
-        return optimize_control_plan(request, llm_client, request_id=get_request_id())
-    except (LLMTimeoutError, LLMResponseFormatError, WorkflowExecutionError):
+        with guarded_llm_client(
+            http_request,
+            credentials,
+            guard,
+            llm_client_provider,
+        ) as llm_client:
+            return optimize_control_plan(
+                request,
+                llm_client,
+                request_id=get_request_id(),
+            )
+    except AppError:
         raise
     except LLMClientError as exc:
-        raise APIServiceError("控制方案优化失败", str(exc)) from exc
-    except AgentCoreError as exc:
         raise APIServiceError("控制方案优化失败", str(exc)) from exc
     except Exception as exc:
         raise APIServiceError("控制方案优化失败", "服务内部错误") from exc

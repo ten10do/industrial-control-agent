@@ -180,19 +180,37 @@ POST /generate
 
 ### 超时、重试与错误处理
 
-- 模型调用默认超时为 90 秒。
-- 超时、连接错误、限流和服务端临时错误最多重试 2 次，并采用简单指数退避。
+- 单次模型 HTTP 尝试的网络阶段超时默认设为 60 秒，包含重试和退避在内的应用层结果预算为 90 秒；每次重试都会按剩余预算缩短网络超时，预算后返回的成功或错误结果统一按超时拒绝。
+- OpenAI SDK 内部重试已显式关闭，统一由应用层最多重试 2 次，因此一个业务请求最多发起 3 次底层模型调用，不会产生双层重试放大。
+- 超时、连接错误、HTTP 408/409/429 和服务端临时错误使用带抖动的指数退避；上游返回有效 `Retry-After` 时优先遵守，但不会等待超过总预算。
+- 前端 `/generate` 与 `/optimize` 的等待上限为 120 秒，晚于后端 90 秒预算，并且不会自动重试付费 POST 请求。
 - 后端统一使用 `SkillExecutionError`、`LLMTimeoutError`、`LLMResponseFormatError` 和 `WorkflowExecutionError` 表达可预期的链路异常。
 - API 返回稳定、脱敏的错误结构；前端按错误类型显示友好提示，并在可用时展示 Request ID。
 
+当前模型客户端使用同步 HTTP 链路。应用层会拒绝 90 秒预算之后才返回的结果，但同步底层 I/O 只能在调用返回后释放并发租约；浏览器中止请求也不等同于强制取消服务器端模型调用。若以后需要严格的 wall-clock 取消，应将模型链路迁移到可取消的异步客户端，而不是用后台线程提前释放租约。
+
+### 模型接口流量保护
+
+`/generate` 与 `/optimize` 共享同一组进程内保护：
+
+- 默认最多同时执行 2 个模型请求，容量已满时返回 `503 API_CAPACITY_EXCEEDED` 和短暂的 `Retry-After`。
+- 默认每 60 秒最多接受 12 个模型请求，每个客户端最多接受 4 个，超限时返回 `429 API_RATE_LIMIT_EXCEEDED` 和 `Retry-After`。
+- 可选 Bearer Token 认证在 `MODEL_API_AUTH_REQUIRED=true` 时启用；未同时配置服务端 `MODEL_API_ACCESS_TOKEN` 时应用会拒绝启动，避免认证配置意外失效。
+- 认证、限流或容量检查拒绝的请求不会创建或调用模型客户端。
+- `/health`、`/examples` 和 CORS 预检保持公开，不占用模型请求额度。
+
+当前限制器针对单个 ASGI 进程。现有单 Worker 部署可以直接使用；如果以后启用多 Worker 或多实例，应在可信 API 网关或共享存储层实现跨进程全局额度。
+
+客户端额度使用 ASGI 服务器在可信代理配置下解析得到的 `request.client.host`，业务代码不会直接信任任意 `X-Forwarded-For`。部署到新的反向代理平台时，应先确认其可信代理配置；即使客户端地址无法区分，单进程总额度和并发上限仍会继续生效。
+
 ### 自动化回归
 
-后端测试使用 Fake LLM、Mock 和固定方案数据覆盖正常 Workflow、API 协议、请求标识、错误清洗、模型超时、有限重试、响应格式异常、14 条规则、评分边界、异常隔离，以及多轮独立规则审查形成的两组共 20 个固定工业控制场景，不会发起真实模型调用。
+后端测试使用 Fake LLM、Mock 和固定方案数据覆盖正常 Workflow、API 协议、请求标识、错误清洗、模型超时总预算、单层有限重试、`Retry-After`、响应格式异常、模型接口认证、限流、并发租约、14 条规则、评分边界、异常隔离，以及多轮独立规则审查形成的两组共 20 个固定工业控制场景，不会发起真实模型调用。
 
 | 验证项 | 命令 | 当前结果 |
 | --- | --- | --- |
-| 后端回归测试 | `python -m pytest backend\tests -q` | 141 passed |
-| 前端组件测试 | `npm.cmd run test` | 4 passed |
+| 后端回归测试 | `python -m pytest backend\tests -q` | 182 passed |
+| 前端组件测试 | `npm.cmd run test` | 10 passed |
 | 前端生产构建 | `npm.cmd run build` | 通过 |
 
 GitHub Actions CI 在以下场景自动触发：
@@ -212,7 +230,7 @@ CI 的 `Backend Tests` 任务执行 Python 语法检查和 pytest 后端回归�
 5. DeepSeek API 接入：使用 OpenAI-compatible API 封装大模型调用。
 6. PLC I/O 点表结构化输出：支持地址、信号名称、信号类型、设备和描述等字段展示。
 7. 链路可观测性：使用 Request ID、结构化日志和步骤耗时串联 API、Workflow 与错误响应。
-8. 弹性模型调用：配置超时、有限重试和指数退避，并统一清洗异常信息。
+8. 弹性模型调用：使用单层有限重试、应用层结果预算、带抖动退避和 `Retry-After`，并统一清洗异常信息。
 9. Fake LLM 测试替身：用于 Workflow、接口协议和异常链路的自动化回归。
 10. GitHub Actions CI：自动执行后端语法检查、pytest、前端依赖安装和生产构建。
 11. 前后端分离部署：前端部署到 Netlify，后端部署到 Render。
@@ -225,6 +243,8 @@ CI 的 `Backend Tests` 任务执行 Python 语法检查和 pytest 后端回归�
 | `GET` | `/examples` | 获取内置自动化控制示例场景。 |
 | `POST` | `/generate` | 根据控制对象、输入设备、输出设备和控制要求生成控制方案。 |
 | `POST` | `/optimize` | 根据优化要求对已有 Markdown 方案进行优化。 |
+
+模型接口可能返回 `401 API_ACCESS_DENIED`、`429 API_RATE_LIMIT_EXCEEDED` 或 `503 API_CAPACITY_EXCEEDED`。所有错误继续使用统一、脱敏的错误结构，并在响应头和响应体中携带相同的 Request ID。
 
 ## 本地运行方式
 
@@ -262,10 +282,18 @@ http://localhost:5173
 
 - `DEEPSEEK_API_KEY`：DeepSeek API Key，配置在后端运行环境中。
 - `FRONTEND_ORIGIN`：允许跨域访问后端的前端地址。
+- `MODEL_API_MAX_CONCURRENCY`：单进程模型请求并发上限，默认 `2`。
+- `MODEL_API_GLOBAL_REQUESTS`：单进程时间窗口内的总请求额度，默认 `12`。
+- `MODEL_API_CLIENT_REQUESTS`：单客户端时间窗口内的请求额度，默认 `4`。
+- `MODEL_API_RATE_WINDOW_SECONDS`：限流时间窗口秒数，默认 `60`。
+- `MODEL_API_AUTH_REQUIRED`：是否要求模型接口携带 Bearer Token，默认 `false`。
+- `MODEL_API_ACCESS_TOKEN`：私有模式使用的服务端访问令牌；仅在可信服务端环境配置。
 
 前端：
 
 - `VITE_API_BASE_URL`：FastAPI 后端地址，例如本地 `http://localhost:8000` 或线上 Render 地址。
+
+任何 `VITE_*` 环境变量都会进入公开的浏览器构建产物。不要创建 `VITE_API_TOKEN`，也不要把 `MODEL_API_ACCESS_TOKEN` 写入前端源码、浏览器存储或 README。当前静态 Netlify 前端应保持 `MODEL_API_AUTH_REQUIRED=false`；需要私有访问时，应由 CLI、可信后端或 Netlify Function 等服务端代理持有 Bearer Token。
 
 ## 在线部署
 
@@ -278,6 +306,7 @@ http://localhost:5173
 - Environment Variables:
   - `DEEPSEEK_API_KEY`
   - `FRONTEND_ORIGIN`
+  - 上述 `MODEL_API_*` 流量保护配置
 
 ### 前端 Netlify
 

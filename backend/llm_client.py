@@ -1,7 +1,11 @@
 import json
+import math
 import os
+import random
 import time
 from collections.abc import Callable
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 from typing import Any, Optional, Protocol
 
 from openai import (
@@ -30,6 +34,11 @@ class LLMClientError(RuntimeError):
     """Sanitized model-service error suitable for the API layer."""
 
 
+DEFAULT_ATTEMPT_TIMEOUT_SECONDS = 60.0
+DEFAULT_TOTAL_TIMEOUT_SECONDS = 90.0
+RETRY_JITTER_RATIO = 0.25
+
+
 class DeepSeekLLMClient:
     def __init__(
         self,
@@ -37,10 +46,14 @@ class DeepSeekLLMClient:
         base_url: str = "https://api.deepseek.com",
         model: str = "deepseek-chat",
         temperature: float = 0.2,
-        timeout: float = 90.0,
+        timeout: float = DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
+        total_timeout: float = DEFAULT_TOTAL_TIMEOUT_SECONDS,
         max_retries: int = 2,
         backoff_seconds: float = 0.25,
         sleep_fn: Callable[[float], None] = time.sleep,
+        clock_fn: Callable[[], float] = time.monotonic,
+        wall_clock_fn: Callable[[], float] = time.time,
+        random_fn: Callable[[], float] = random.random,
         client: Any | None = None,
     ) -> None:
         resolved_key = api_key or os.getenv("DEEPSEEK_API_KEY")
@@ -49,10 +62,20 @@ class DeepSeekLLMClient:
 
         self.model = model
         self.temperature = temperature
+        self.timeout = timeout
+        self.total_timeout = total_timeout
         self.max_retries = max_retries
         self.backoff_seconds = backoff_seconds
         self.sleep_fn = sleep_fn
-        self.client = client or OpenAI(api_key=resolved_key, base_url=base_url, timeout=timeout)
+        self.clock_fn = clock_fn
+        self.wall_clock_fn = wall_clock_fn
+        self.random_fn = random_fn
+        self.client = client or OpenAI(
+            api_key=resolved_key,
+            base_url=base_url,
+            timeout=timeout,
+            max_retries=0,
+        )
 
     def chat(self, prompt: str, system_prompt: Optional[str] = None, request_id: Optional[str] = None) -> str:
         messages = []
@@ -62,44 +85,55 @@ class DeepSeekLLMClient:
 
         retry_count = 0
         response = None
+        deadline = self.clock_fn() + self.total_timeout
         for attempt in range(self.max_retries + 1):
+            attempt_timeout = self._attempt_timeout(deadline)
             try:
                 response = self.client.chat.completions.create(
                     model=self.model,
                     messages=messages,
                     temperature=self.temperature,
+                    timeout=attempt_timeout,
                 )
-                break
             except AuthenticationError as exc:
+                self._raise_if_deadline_exceeded(deadline, retry_count, request_id)
                 raise LLMClientError("Model service authentication failed") from exc
             except APITimeoutError as exc:
+                self._raise_if_deadline_exceeded(deadline, retry_count, request_id)
                 if attempt >= self.max_retries:
                     self._log_retry("error", retry_count, "APITimeoutError", request_id)
                     raise LLMTimeoutError() from exc
                 retry_count += 1
                 self._log_retry("retry", retry_count, "APITimeoutError", request_id)
-                self.sleep_fn(self.backoff_seconds * (2**attempt))
+                self._sleep_before_retry(attempt, exc, deadline)
             except (APIConnectionError, RateLimitError) as exc:
+                self._raise_if_deadline_exceeded(deadline, retry_count, request_id)
                 if attempt >= self.max_retries:
                     self._log_retry("error", retry_count, type(exc).__name__, request_id)
                     raise LLMClientError("Model service call failed") from exc
                 retry_count += 1
                 self._log_retry("retry", retry_count, type(exc).__name__, request_id)
-                self.sleep_fn(self.backoff_seconds * (2**attempt))
+                self._sleep_before_retry(attempt, exc, deadline)
             except APIError as exc:
+                self._raise_if_deadline_exceeded(deadline, retry_count, request_id)
                 status_code = getattr(exc, "status_code", None)
-                if status_code is not None and status_code < 500:
+                if status_code is not None and status_code < 500 and status_code not in {408, 409, 429}:
                     raise LLMClientError("Model service call failed") from exc
                 if attempt >= self.max_retries:
                     self._log_retry("error", retry_count, "APIError", request_id)
                     raise LLMClientError("Model service call failed") from exc
                 retry_count += 1
                 self._log_retry("retry", retry_count, "APIError", request_id)
-                self.sleep_fn(self.backoff_seconds * (2**attempt))
+                self._sleep_before_retry(attempt, exc, deadline)
             except OpenAIError as exc:
+                self._raise_if_deadline_exceeded(deadline, retry_count, request_id)
                 raise LLMClientError("Model service call failed") from exc
             except Exception as exc:
+                self._raise_if_deadline_exceeded(deadline, retry_count, request_id)
                 raise LLMClientError("Model service call failed") from exc
+            else:
+                self._raise_if_deadline_exceeded(deadline, retry_count, request_id)
+                break
 
         content = response.choices[0].message.content if response else ""
         if not content or not content.strip():
@@ -115,6 +149,71 @@ class DeepSeekLLMClient:
             retry_count=retry_count,
             error_type=error_type,
         )
+
+    def _raise_if_deadline_exceeded(
+        self,
+        deadline: float,
+        retry_count: int,
+        request_id: Optional[str],
+    ) -> None:
+        if self.clock_fn() >= deadline:
+            self._log_retry("error", retry_count, "DeadlineExceeded", request_id)
+            raise LLMTimeoutError()
+
+    def _attempt_timeout(self, deadline: float) -> float:
+        remaining = deadline - self.clock_fn()
+        if remaining <= 0:
+            raise LLMTimeoutError()
+        return min(self.timeout, remaining)
+
+    def _sleep_before_retry(self, attempt: int, error: Exception, deadline: float) -> None:
+        base_delay = self.backoff_seconds * (2**attempt)
+        jitter = base_delay * RETRY_JITTER_RATIO * self.random_fn()
+        delay = max(base_delay + jitter, self._retry_after_seconds(error))
+        remaining = deadline - self.clock_fn()
+        if remaining <= 0 or delay >= remaining:
+            raise LLMTimeoutError()
+        if delay > 0:
+            self.sleep_fn(delay)
+
+    def _retry_after_seconds(self, error: Exception) -> float:
+        response = getattr(error, "response", None)
+        headers = getattr(response, "headers", None)
+        if headers is None:
+            return 0.0
+
+        raw_milliseconds = headers.get("retry-after-ms")
+        try:
+            milliseconds = float(raw_milliseconds)
+        except (TypeError, ValueError):
+            milliseconds = 0.0
+        if math.isfinite(milliseconds) and milliseconds > 0:
+            return milliseconds / 1000
+
+        raw_value = headers.get("Retry-After")
+        try:
+            seconds = float(raw_value)
+        except (TypeError, ValueError):
+            seconds = 0.0
+        if math.isfinite(seconds) and seconds > 0:
+            return seconds
+
+        try:
+            retry_at = parsedate_to_datetime(raw_value)
+        except (TypeError, ValueError, OverflowError):
+            return 0.0
+        try:
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=timezone.utc)
+            seconds = retry_at.timestamp() - self.wall_clock_fn()
+        except (OSError, OverflowError, ValueError):
+            return 0.0
+        return seconds if math.isfinite(seconds) and seconds > 0 else 0.0
+
+    def close(self) -> None:
+        close = getattr(self.client, "close", None)
+        if callable(close):
+            close()
 
 
 class FakeLLMClient:

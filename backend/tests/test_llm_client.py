@@ -1,7 +1,11 @@
+from datetime import datetime, timezone
+from email.utils import format_datetime
+
 import httpx
 import pytest
-from openai import APIConnectionError, APIError, APITimeoutError
+from openai import APIConnectionError, APIError, APITimeoutError, RateLimitError
 
+import backend.llm_client as llm_client_module
 from backend.errors import LLMResponseFormatError, LLMTimeoutError
 from backend.llm_client import DeepSeekLLMClient, LLMClientError
 
@@ -43,10 +47,56 @@ class _Client:
     def __init__(self, outcomes: list[object]) -> None:
         self.completions = _Completions(outcomes)
         self.chat = _Chat(self.completions)
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.sleeps: list[float] = []
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.advance(seconds)
 
 
 def _request() -> httpx.Request:
     return httpx.Request("POST", "https://api.deepseek.com/chat/completions")
+
+
+def _rate_limit_error(retry_after: str, header: str = "Retry-After") -> RateLimitError:
+    response = httpx.Response(
+        429,
+        request=_request(),
+        headers={header: retry_after},
+    )
+    return RateLimitError("rate limited", response=response, body=None)
+
+
+def test_production_openai_client_disables_sdk_retries(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    client = _Client(['{"ok": true}'])
+
+    def build_client(**kwargs: object) -> _Client:
+        captured.update(kwargs)
+        return client
+
+    monkeypatch.setattr(llm_client_module, "OpenAI", build_client)
+
+    llm = DeepSeekLLMClient(api_key="placeholder")
+
+    assert captured["max_retries"] == 0
+    assert captured["timeout"] == 60
+    assert llm.total_timeout == 90
 
 
 def test_llm_timeout_reaches_max_retries_without_real_wait() -> None:
@@ -64,6 +114,215 @@ def test_transient_error_triggers_retry() -> None:
     llm = DeepSeekLLMClient(client=client, max_retries=2, backoff_seconds=0, sleep_fn=lambda _: None)
 
     assert llm.chat("prompt", request_id="retry-1") == '{"ok": true}'
+    assert client.completions.calls == 2
+
+
+def test_total_deadline_caps_attempt_timeout_and_stops_extra_calls() -> None:
+    clock = _Clock()
+
+    class _TimedCompletions:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.timeouts: list[float] = []
+
+        def create(self, **kwargs: object) -> _Response:
+            timeout = float(kwargs["timeout"])
+            self.calls += 1
+            self.timeouts.append(timeout)
+            clock.advance(timeout)
+            raise APITimeoutError(_request())
+
+    completions = _TimedCompletions()
+    client = _Client([])
+    client.completions = completions
+    client.chat = _Chat(completions)
+    llm = DeepSeekLLMClient(
+        client=client,
+        timeout=60,
+        total_timeout=90,
+        max_retries=2,
+        backoff_seconds=0,
+        sleep_fn=clock.sleep,
+        clock_fn=clock,
+    )
+
+    with pytest.raises(LLMTimeoutError):
+        llm.chat("prompt", request_id="deadline-1")
+
+    assert completions.calls == 2
+    assert completions.timeouts == pytest.approx([60, 30])
+    assert clock.now == pytest.approx(90)
+
+
+def test_successful_response_after_total_deadline_is_rejected() -> None:
+    clock = _Clock()
+
+    class _LateCompletions:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def create(self, **_: object) -> _Response:
+            self.calls += 1
+            clock.advance(91)
+            return _Response('{"ok": true}')
+
+    completions = _LateCompletions()
+    client = _Client([])
+    client.completions = completions
+    client.chat = _Chat(completions)
+    llm = DeepSeekLLMClient(
+        client=client,
+        total_timeout=90,
+        clock_fn=clock,
+    )
+
+    with pytest.raises(LLMTimeoutError):
+        llm.chat("prompt", request_id="late-success-1")
+
+    assert completions.calls == 1
+
+
+@pytest.mark.parametrize("error_kind", ["connection", "rate_limit", "server_error"])
+def test_error_after_total_deadline_is_reported_as_timeout(error_kind: str) -> None:
+    clock = _Clock()
+    if error_kind == "connection":
+        error = APIConnectionError(request=_request())
+    elif error_kind == "rate_limit":
+        error = _rate_limit_error("1")
+    else:
+        error = APIError("server error", _request(), body=None)
+        error.status_code = 500
+
+    class _LateErrorCompletions:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def create(self, **_: object) -> _Response:
+            self.calls += 1
+            clock.advance(91)
+            raise error
+
+    completions = _LateErrorCompletions()
+    client = _Client([])
+    client.completions = completions
+    client.chat = _Chat(completions)
+    llm = DeepSeekLLMClient(
+        client=client,
+        total_timeout=90,
+        max_retries=0,
+        clock_fn=clock,
+    )
+
+    with pytest.raises(LLMTimeoutError):
+        llm.chat("prompt", request_id=f"late-{error_kind}-1")
+
+    assert completions.calls == 1
+
+
+def test_rate_limit_retry_honors_retry_after() -> None:
+    clock = _Clock()
+    client = _Client([_rate_limit_error("7"), '{"ok": true}'])
+    llm = DeepSeekLLMClient(
+        client=client,
+        max_retries=1,
+        backoff_seconds=0.25,
+        sleep_fn=clock.sleep,
+        clock_fn=clock,
+        random_fn=lambda: 0,
+    )
+
+    assert llm.chat("prompt", request_id="retry-after-1") == '{"ok": true}'
+    assert client.completions.calls == 2
+    assert clock.sleeps == [7]
+
+
+def test_rate_limit_retry_honors_http_date_retry_after() -> None:
+    clock = _Clock()
+    wall_clock = 1_000.0
+    retry_at = format_datetime(
+        datetime.fromtimestamp(wall_clock + 7, tz=timezone.utc),
+        usegmt=True,
+    )
+    client = _Client([_rate_limit_error(retry_at), '{"ok": true}'])
+    llm = DeepSeekLLMClient(
+        client=client,
+        max_retries=1,
+        sleep_fn=clock.sleep,
+        clock_fn=clock,
+        wall_clock_fn=lambda: wall_clock,
+        random_fn=lambda: 0,
+    )
+
+    assert llm.chat("prompt", request_id="retry-after-date-1") == '{"ok": true}'
+    assert clock.sleeps == [7]
+
+
+def test_rate_limit_retry_honors_retry_after_milliseconds() -> None:
+    clock = _Clock()
+    client = _Client(
+        [_rate_limit_error("1500", header="retry-after-ms"), '{"ok": true}'],
+    )
+    llm = DeepSeekLLMClient(
+        client=client,
+        max_retries=1,
+        sleep_fn=clock.sleep,
+        clock_fn=clock,
+        random_fn=lambda: 0,
+    )
+
+    assert llm.chat("prompt", request_id="retry-after-ms-1") == '{"ok": true}'
+    assert clock.sleeps == [1.5]
+
+
+@pytest.mark.parametrize("retry_after", ["invalid", "-1", "NaN"])
+def test_invalid_retry_after_uses_exponential_backoff(retry_after: str) -> None:
+    clock = _Clock()
+    client = _Client([_rate_limit_error(retry_after), '{"ok": true}'])
+    llm = DeepSeekLLMClient(
+        client=client,
+        max_retries=1,
+        backoff_seconds=0.25,
+        sleep_fn=clock.sleep,
+        clock_fn=clock,
+        random_fn=lambda: 0,
+    )
+
+    assert llm.chat("prompt", request_id="invalid-retry-after-1") == '{"ok": true}'
+    assert clock.sleeps == [0.25]
+
+
+def test_retry_after_beyond_deadline_stops_without_waiting_or_retrying() -> None:
+    clock = _Clock()
+    client = _Client([_rate_limit_error("120"), '{"ok": true}'])
+    llm = DeepSeekLLMClient(
+        client=client,
+        total_timeout=90,
+        max_retries=1,
+        sleep_fn=clock.sleep,
+        clock_fn=clock,
+        random_fn=lambda: 0,
+    )
+
+    with pytest.raises(LLMTimeoutError):
+        llm.chat("prompt", request_id="retry-after-deadline-1")
+
+    assert client.completions.calls == 1
+    assert clock.sleeps == []
+
+
+@pytest.mark.parametrize("status_code", [408, 409, 500])
+def test_sdk_retryable_api_statuses_remain_retryable(status_code: int) -> None:
+    error = APIError("retryable", _request(), body=None)
+    error.status_code = status_code
+    client = _Client([error, '{"ok": true}'])
+    llm = DeepSeekLLMClient(
+        client=client,
+        max_retries=1,
+        backoff_seconds=0,
+        sleep_fn=lambda _: None,
+    )
+
+    assert llm.chat("prompt", request_id=f"retryable-{status_code}") == '{"ok": true}'
     assert client.completions.calls == 2
 
 
@@ -85,3 +344,12 @@ def test_empty_llm_content_is_format_error() -> None:
 
     with pytest.raises(LLMResponseFormatError):
         llm.chat("prompt", request_id="empty-1")
+
+
+def test_llm_client_closes_underlying_http_client() -> None:
+    client = _Client(['{"ok": true}'])
+    llm = DeepSeekLLMClient(client=client)
+
+    llm.close()
+
+    assert client.closed is True
