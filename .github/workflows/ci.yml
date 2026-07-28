@@ -35,11 +35,20 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r backend/requirements.txt
 
+      - name: Install linting tools
+        run: python -m pip install ruff pytest-cov pip-audit
+
+      - name: Ruff lint
+        run: python -m ruff check backend
+
       - name: Check Python syntax
         run: python -m compileall -q backend
 
-      - name: Run backend tests
-        run: python -m pytest backend/tests -v
+      - name: Run backend tests with coverage
+        run: python -m pytest backend/tests -v --cov=backend --cov-report=term --cov-fail-under=70
+
+      - name: Dependency audit
+        run: python -m pip_audit
 
   frontend:
     name: Frontend Build
@@ -58,6 +67,10 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      - name: Run ESLint
+        working-directory: frontend
+        run: npx eslint src/ --max-warnings 5
+
       - name: Run frontend tests
         working-directory: frontend
         run: npm run test
@@ -67,3 +80,34 @@ jobs:
         env:
           VITE_API_BASE_URL: https://industrial-control-agent-backend.onrender.com
         run: npm run build
+
+  smoke:
+    name: Post-Deploy Smoke Test
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Smoke test backend
+        run: |
+          for i in 1 2 3 4 5; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://industrial-control-agent-backend.onrender.com/health || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "Backend healthy"
+              exit 0
+            fi
+            echo "Attempt $i: HTTP $STATUS, retrying..."
+            sleep 10
+          done
+          echo "Backend health check failed"
+          exit 1
+
+      - name: Smoke test frontend
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://industrial-control-agent.netlify.app || echo "000")
+          if [ "$STATUS" = "200" ]; then
+            echo "Frontend healthy"
+          else
+            echo "Frontend returned HTTP $STATUS"
+            exit 1
+          fi
