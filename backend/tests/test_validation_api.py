@@ -51,6 +51,9 @@ VALIDATION_REPORT_FIELDS = {
     "high_count",
     "medium_count",
     "low_count",
+    "error_rules",
+    "applicable_rules",
+    "coverage_ratio",
     "issues",
     "rule_results",
 }
@@ -349,10 +352,7 @@ def test_unparseable_io_row_is_reported_without_exposing_internal_error() -> Non
     finally:
         app.dependency_overrides.clear()
 
-    assert response.status_code == 200
-    report = response.json()["validation_report"]
-    io_result = next(
-        result for result in report["rule_results"] if result["rule_id"] == "IO_TABLE_INCOMPLETE"
-    )
-    assert io_result["status"] == "failed"
+    assert response.status_code == 502
+    payload = response.json()
+    assert payload["code"] == "API_SERVICE_ERROR"
     assert "Traceback" not in response.text

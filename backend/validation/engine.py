@@ -16,7 +16,7 @@ from .models import (
     ValidationReport,
     ValidationStatus,
 )
-from .scoring import SCORING_STATUSES, risk_level_for_score, score_rule_results
+from .scoring import SCORING_STATUSES, risk_level_floor, risk_level_for_score, score_rule_results
 
 
 def _log_validation_event_safely(**event) -> None:
@@ -37,6 +37,9 @@ def _unavailable_report(context: ValidationContext) -> ValidationReport:
         warning_rules=0,
         failed_rules=0,
         not_applicable_rules=0,
+        error_rules=0,
+        applicable_rules=0,
+        coverage_ratio=0.0,
         critical_count=0,
         high_count=0,
         medium_count=0,
@@ -124,34 +127,97 @@ class RuleEngine:
         return _unavailable_report(context)
 
     @staticmethod
+    @staticmethod
+
     def _build_report(
+
         context: ValidationContext,
+
         results: list[RuleResult],
+
         validation_status: ValidationStatus,
+
     ) -> ValidationReport:
+
         risk_score = score_rule_results(results)
+
         issues = [result for result in results if result.status in SCORING_STATUSES]
 
+
+
         def count_status(status: RuleStatus) -> int:
+
             return sum(result.status == status for result in results)
 
+
+
         def count_severity(severity: Severity) -> int:
+
             return sum(result.severity == severity for result in issues)
 
-        return ValidationReport(
-            request_id=context.request_id,
-            validation_status=validation_status,
-            risk_level=risk_level_for_score(risk_score),
-            risk_score=risk_score,
-            total_rules=len(results),
-            passed_rules=count_status(RuleStatus.PASSED),
-            warning_rules=count_status(RuleStatus.WARNING),
-            failed_rules=count_status(RuleStatus.FAILED),
-            not_applicable_rules=count_status(RuleStatus.NOT_APPLICABLE),
-            critical_count=count_severity(Severity.CRITICAL),
-            high_count=count_severity(Severity.HIGH),
-            medium_count=count_severity(Severity.MEDIUM),
-            low_count=count_severity(Severity.LOW),
-            issues=issues,
-            rule_results=results,
+
+
+        applicable_rules = sum(
+
+            1 for r in results if r.status != RuleStatus.NOT_APPLICABLE
+
         )
+
+        coverage_ratio = applicable_rules / len(results) if results else 0.0
+
+        error_rules = count_status(RuleStatus.ERROR)
+
+
+
+        if applicable_rules == 0 and not error_rules:
+
+            validation_status = ValidationStatus.INSUFFICIENT_DATA
+
+            risk_level = RiskLevel.UNKNOWN
+
+        else:
+
+            risk_level = risk_level_floor(risk_score, issues)
+
+
+
+        return ValidationReport(
+
+            request_id=context.request_id,
+
+            validation_status=validation_status,
+
+            risk_level=risk_level,
+
+            risk_score=risk_score,
+
+            total_rules=len(results),
+
+            passed_rules=count_status(RuleStatus.PASSED),
+
+            warning_rules=count_status(RuleStatus.WARNING),
+
+            failed_rules=count_status(RuleStatus.FAILED),
+
+            not_applicable_rules=count_status(RuleStatus.NOT_APPLICABLE),
+
+            error_rules=error_rules,
+
+            applicable_rules=applicable_rules,
+
+            coverage_ratio=coverage_ratio,
+
+            critical_count=count_severity(Severity.CRITICAL),
+
+            high_count=count_severity(Severity.HIGH),
+
+            medium_count=count_severity(Severity.MEDIUM),
+
+            low_count=count_severity(Severity.LOW),
+
+            issues=issues,
+
+            rule_results=results,
+
+        )
+
