@@ -1,5 +1,6 @@
 import json
 import logging
+import sys
 import time
 from contextvars import ContextVar
 from contextlib import contextmanager
@@ -8,6 +9,15 @@ from typing import Iterator
 
 request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
 logger = logging.getLogger("industrial_control_agent")
+
+
+def configure_logging(level: int = logging.INFO) -> None:
+    logger.setLevel(level)
+    if not logger.handlers:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        logger.addHandler(handler)
+    logger.propagate = False
 
 
 def set_request_id(request_id: str) -> None:

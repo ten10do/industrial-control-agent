@@ -3,7 +3,16 @@ const developmentBaseUrl = import.meta.env.DEV ? "http://localhost:8000" : "";
 
 export const API_BASE_URL = (configuredBaseUrl || developmentBaseUrl).replace(/\/$/, "");
 export const MODEL_API_REQUEST_TIMEOUT_MS = 120000;
-const MAPPED_ERROR_STATUSES = new Set([401, 403, 422, 429, 502, 503, 504]);
+export const MODEL_JOB_POLL_INTERVAL_MS = 1000;
+export const MODEL_JOB_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
+const MAPPED_ERROR_STATUSES = new Set([401, 403, 409, 422, 429, 502, 503, 504]);
+let accessTokenProvider = () => "";
+const pendingIdempotencyKeys = new Map();
+
+
+export function setAccessTokenProvider(provider) {
+  accessTokenProvider = typeof provider === "function" ? provider : () => "";
+}
 
 
 class ApiRequestError extends Error {
@@ -27,6 +36,9 @@ class ApiRequestError extends Error {
 function errorMessageForStatus(status, retryAfterSeconds = null) {
   if (status === 422) {
     return "输入信息不完整或格式不正确，请检查后重试。";
+  }
+  if (status === 409) {
+    return "请求正在处理或数据版本已变化，请稍后重试或刷新方案。";
   }
   if (status === 429) {
     return retryAfterSeconds
@@ -62,15 +74,17 @@ function parseRetryAfter(response) {
 
 
 async function request(path, options = {}) {
-  const { timeoutMs = 120000, ...fetchOptions } = options;
+  const { timeoutMs = 120000, responseType = "json", ...fetchOptions } = options;
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
 
   try {
+    const accessToken = accessTokenProvider();
     const response = await fetch(`${API_BASE_URL}${path}`, {
       ...fetchOptions,
       headers: {
         ...(fetchOptions.body ? { "Content-Type": "application/json" } : {}),
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         ...fetchOptions.headers,
       },
       signal: controller.signal,
@@ -97,7 +111,7 @@ async function request(path, options = {}) {
       );
     }
 
-    return await response.json();
+    return responseType === "text" ? await response.text() : await response.json();
   } catch (error) {
     if (error instanceof ApiRequestError) {
       throw error;
@@ -117,24 +131,188 @@ export function checkHealth() {
 }
 
 
+function newIdempotencyKey() {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+  return `web-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+
+async function idempotentRequest(path, payload, options = {}) {
+  const { retainKeyOnSuccess = false, ...requestOptions } = options;
+  const serializedPayload = JSON.stringify(payload);
+  const attemptKey = `${path}:${serializedPayload}`;
+  const idempotencyKey = pendingIdempotencyKeys.get(attemptKey) || newIdempotencyKey();
+  pendingIdempotencyKeys.set(attemptKey, idempotencyKey);
+  try {
+    const response = await request(path, {
+      ...requestOptions,
+      method: "POST",
+      body: serializedPayload,
+      headers: {
+        "Idempotency-Key": idempotencyKey,
+        ...requestOptions.headers,
+      },
+    });
+    if (!retainKeyOnSuccess) {
+      pendingIdempotencyKeys.delete(attemptKey);
+    }
+    return response;
+  } catch (error) {
+    if (error instanceof ApiRequestError && error.code === "IDEMPOTENCY_CONFLICT") {
+      pendingIdempotencyKeys.delete(attemptKey);
+    }
+    if (
+      error instanceof ApiRequestError
+      && error.status !== null
+      && error.status < 500
+      && error.status !== 408
+      && error.status !== 409
+      && error.status !== 429
+    ) {
+      pendingIdempotencyKeys.delete(attemptKey);
+    }
+    throw error;
+  }
+}
+
+
+function releaseIdempotencyKey(path, payload) {
+  pendingIdempotencyKeys.delete(`${path}:${JSON.stringify(payload)}`);
+}
+
+
+export function checkReadiness() {
+  return request("/ready", { timeoutMs: 5000 });
+}
+
+
 export function fetchExamples() {
   return request("/examples", { timeoutMs: 10000 });
 }
 
 
-export function generateControlPlan(payload) {
-  return request("/generate", {
-    method: "POST",
-    body: JSON.stringify(payload),
-    timeoutMs: MODEL_API_REQUEST_TIMEOUT_MS,
+export function fetchCurrentUser(accessToken = "") {
+  return request("/auth/me", {
+    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+    timeoutMs: 10000,
   });
 }
 
 
-export function optimizeControlPlan(payload) {
-  return request("/optimize", {
+export function fetchModelJob(jobId) {
+  return request(`/jobs/${encodeURIComponent(jobId)}`, { timeoutMs: 10000 });
+}
+
+
+export function cancelModelJob(jobId) {
+  return request(`/jobs/${encodeURIComponent(jobId)}/cancel`, {
     method: "POST",
-    body: JSON.stringify(payload),
-    timeoutMs: MODEL_API_REQUEST_TIMEOUT_MS,
+    timeoutMs: 10000,
+  });
+}
+
+
+async function waitForModelJob(initialJob, onStatus) {
+  const startedAt = Date.now();
+  let job = initialJob;
+  while (true) {
+    onStatus?.(job);
+    if (job.status === "succeeded") {
+      return job.result;
+    }
+    if (job.status === "failed" || job.status === "cancelled") {
+      const error = new ApiRequestError(
+        job.error_message
+          || (job.status === "cancelled" ? "模型任务已取消。" : "模型任务执行失败，请稍后重试。"),
+        null,
+        "",
+        job.error_code || `MODEL_JOB_${job.status.toUpperCase()}`,
+      );
+      error.modelJobTerminal = true;
+      throw error;
+    }
+    if (Date.now() - startedAt >= MODEL_JOB_WAIT_TIMEOUT_MS) {
+      throw new ApiRequestError(
+        "模型任务仍在后台执行，可稍后从任务状态继续查看。",
+        408,
+        "",
+        "MODEL_JOB_WAIT_TIMEOUT",
+      );
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, MODEL_JOB_POLL_INTERVAL_MS));
+    job = await fetchModelJob(job.job_id);
+  }
+}
+
+
+export async function generateControlPlan(payload, { onStatus } = {}) {
+  const path = "/jobs/generate";
+  try {
+    const job = await idempotentRequest(path, payload, {
+      timeoutMs: MODEL_API_REQUEST_TIMEOUT_MS,
+      retainKeyOnSuccess: true,
+    });
+    const result = await waitForModelJob(job, onStatus);
+    releaseIdempotencyKey(path, payload);
+    return result;
+  } catch (error) {
+    if (error?.modelJobTerminal) {
+      releaseIdempotencyKey(path, payload);
+    }
+    throw error;
+  }
+}
+
+
+export async function optimizeControlPlan(payload, { onStatus } = {}) {
+  const path = "/jobs/optimize";
+  try {
+    const job = await idempotentRequest(path, payload, {
+      timeoutMs: MODEL_API_REQUEST_TIMEOUT_MS,
+      retainKeyOnSuccess: true,
+    });
+    const result = await waitForModelJob(job, onStatus);
+    releaseIdempotencyKey(path, payload);
+    return result;
+  } catch (error) {
+    if (error?.modelJobTerminal) {
+      releaseIdempotencyKey(path, payload);
+    }
+    throw error;
+  }
+}
+
+
+export function fetchPlan(planId) {
+  return request(`/plans/${encodeURIComponent(planId)}`, { timeoutMs: 10000 });
+}
+
+
+export function fetchPlans(accessToken = "") {
+  return request("/plans", {
+    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+    timeoutMs: 10000,
+  });
+}
+
+
+export function fetchPlanAudit(planId) {
+  return request(`/plans/${encodeURIComponent(planId)}/audit`, { timeoutMs: 10000 });
+}
+
+
+export function reviewPlan(planId, payload) {
+  return idempotentRequest(`/plans/${encodeURIComponent(planId)}/reviews`, payload, {
+    timeoutMs: 15000,
+  });
+}
+
+
+export function exportPlanMarkdown(planId) {
+  return request(`/plans/${encodeURIComponent(planId)}/export`, {
+    responseType: "text",
+    timeoutMs: 15000,
   });
 }

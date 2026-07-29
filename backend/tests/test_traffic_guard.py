@@ -8,12 +8,17 @@ import backend.traffic_guard as traffic_guard_module
 from backend.errors import (
     APIAccessDeniedError,
     APICapacityExceededError,
+    APIDailyBudgetExceededError,
     APIRateLimitExceededError,
     LLMTimeoutError,
 )
 from backend.llm_client import FakeLLMClient, LLMClientError
 from backend.main import app, get_model_api_guard
-from backend.traffic_guard import ModelAPITrafficGuard, TrafficGuardSettings
+from backend.traffic_guard import (
+    ModelAPITrafficGuard,
+    RedisModelAPITrafficGuard,
+    TrafficGuardSettings,
+)
 
 
 GENERATE_PAYLOAD = {
@@ -35,6 +40,7 @@ def build_guard(
     max_concurrency: int = 2,
     global_requests: int = 20,
     client_requests: int = 10,
+    daily_requests: int = 200,
     window_seconds: float = 60,
     access_token: str | None = None,
     clock=None,
@@ -44,6 +50,7 @@ def build_guard(
             max_concurrency=max_concurrency,
             global_requests=global_requests,
             client_requests=client_requests,
+            daily_requests=daily_requests,
             window_seconds=window_seconds,
             auth_required=access_token is not None,
             access_token=access_token,
@@ -270,7 +277,6 @@ def test_access_rejection_does_not_construct_or_call_llm_client(
     factory = CountingClientFactory(llm_client)
     app.dependency_overrides[get_model_api_guard] = lambda: guard
     monkeypatch.setattr(main_module, "DeepSeekLLMClient", factory)
-    monkeypatch.setattr(main_module, "load_dotenv", lambda *_args, **_kwargs: False)
 
     with TestClient(app) as client:
         response = client.post(
@@ -316,7 +322,6 @@ def test_non_ascii_bearer_is_rejected_without_constructing_llm(
     factory = CountingClientFactory(llm_client)
     app.dependency_overrides[get_model_api_guard] = lambda: guard
     monkeypatch.setattr(main_module, "DeepSeekLLMClient", factory)
-    monkeypatch.setattr(main_module, "load_dotenv", lambda *_args, **_kwargs: False)
 
     with TestClient(app) as client:
         response = client.post(
@@ -343,7 +348,6 @@ def test_invalid_body_does_not_construct_llm_or_consume_quota(
     factory = CountingClientFactory(llm_client)
     app.dependency_overrides[get_model_api_guard] = lambda: guard
     monkeypatch.setattr(main_module, "DeepSeekLLMClient", factory)
-    monkeypatch.setattr(main_module, "load_dotenv", lambda *_args, **_kwargs: False)
 
     with TestClient(app) as client:
         invalid = client.post("/generate", json={"control_object": ""})
@@ -362,7 +366,6 @@ def test_generate_and_optimize_share_global_rate_limit(monkeypatch) -> None:
     factory = CountingClientFactory(llm_client)
     app.dependency_overrides[get_model_api_guard] = lambda: guard
     monkeypatch.setattr(main_module, "DeepSeekLLMClient", factory)
-    monkeypatch.setattr(main_module, "load_dotenv", lambda *_args, **_kwargs: False)
 
     with TestClient(app) as client:
         first = client.post("/generate", json=GENERATE_PAYLOAD)
@@ -409,7 +412,6 @@ def test_concurrency_rejection_does_not_call_llm_and_lease_is_released(
     factory = CountingClientFactory(llm_client)
     app.dependency_overrides[get_model_api_guard] = lambda: guard
     monkeypatch.setattr(main_module, "DeepSeekLLMClient", factory)
-    monkeypatch.setattr(main_module, "load_dotenv", lambda *_args, **_kwargs: False)
     first_responses = []
 
     with TestClient(app) as client:
@@ -458,7 +460,6 @@ def test_workflow_failure_releases_capacity_for_next_request(monkeypatch) -> Non
     factory = CountingClientFactory(llm_client)
     app.dependency_overrides[get_model_api_guard] = lambda: guard
     monkeypatch.setattr(main_module, "DeepSeekLLMClient", factory)
-    monkeypatch.setattr(main_module, "load_dotenv", lambda *_args, **_kwargs: False)
 
     with TestClient(app) as client:
         failed = client.post("/generate", json=GENERATE_PAYLOAD)
@@ -490,7 +491,6 @@ def test_llm_factory_failure_releases_capacity_for_next_request(
     factory = FailOnceFactory()
     app.dependency_overrides[get_model_api_guard] = lambda: guard
     monkeypatch.setattr(main_module, "DeepSeekLLMClient", factory)
-    monkeypatch.setattr(main_module, "load_dotenv", lambda *_args, **_kwargs: False)
 
     with TestClient(app) as client:
         failed = client.post("/generate", json=GENERATE_PAYLOAD)
@@ -523,7 +523,6 @@ def test_client_close_failure_does_not_replace_successful_response(
     factory = CountingClientFactory(llm_client)
     app.dependency_overrides[get_model_api_guard] = lambda: guard
     monkeypatch.setattr(main_module, "DeepSeekLLMClient", factory)
-    monkeypatch.setattr(main_module, "load_dotenv", lambda *_args, **_kwargs: False)
 
     with TestClient(app) as client:
         first = client.post("/generate", json=GENERATE_PAYLOAD)
@@ -563,7 +562,6 @@ def test_client_close_failure_does_not_replace_workflow_error(
     factory = CountingClientFactory(llm_client)
     app.dependency_overrides[get_model_api_guard] = lambda: guard
     monkeypatch.setattr(main_module, "DeepSeekLLMClient", factory)
-    monkeypatch.setattr(main_module, "load_dotenv", lambda *_args, **_kwargs: False)
 
     with TestClient(app) as client:
         response = client.post("/generate", json=GENERATE_PAYLOAD)
@@ -579,7 +577,6 @@ def test_health_and_examples_are_not_guarded(monkeypatch) -> None:
     factory = CountingClientFactory()
     app.dependency_overrides[get_model_api_guard] = lambda: guard
     monkeypatch.setattr(main_module, "DeepSeekLLMClient", factory)
-    monkeypatch.setattr(main_module, "load_dotenv", lambda *_args, **_kwargs: False)
 
     with TestClient(app) as client:
         health = client.get("/health")
@@ -597,3 +594,77 @@ def test_health_and_examples_are_not_guarded(monkeypatch) -> None:
     assert examples.status_code == 200
     assert preflight.status_code == 200
     assert factory.calls == 0
+
+
+def test_process_guard_enforces_rolling_daily_budget() -> None:
+    guard = build_guard(
+        global_requests=10,
+        client_requests=10,
+        daily_requests=1,
+    )
+    guard.acquire("client-1", None).release()
+
+    with pytest.raises(APIDailyBudgetExceededError):
+        guard.acquire("client-1", None)
+
+
+class FakeRedis:
+    def __init__(self, acquire_result=(0, 0)) -> None:
+        self.acquire_result = acquire_result
+        self.calls = []
+        self.pinged = False
+        self.closed = False
+
+    def ping(self) -> None:
+        self.pinged = True
+
+    def eval(self, script, key_count, *values):
+        self.calls.append((script, key_count, values))
+        if key_count == 4:
+            return self.acquire_result
+        return 1
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_redis_guard_uses_atomic_shared_quota_and_releases_lease() -> None:
+    redis_client = FakeRedis()
+    settings = TrafficGuardSettings(
+        max_concurrency=2,
+        global_requests=12,
+        client_requests=4,
+        daily_requests=100,
+        redis_url="redis://unused",
+    )
+    guard = RedisModelAPITrafficGuard(settings, redis_client=redis_client)
+
+    guard.ping()
+    lease = guard.acquire("sensitive-client-address", None)
+    lease.release()
+    guard.close()
+
+    assert redis_client.pinged is True
+    assert redis_client.closed is True
+    assert len(redis_client.calls) == 2
+    acquire_values = redis_client.calls[0][2]
+    assert all("sensitive-client-address" not in str(value) for value in acquire_values)
+
+
+@pytest.mark.parametrize(
+    ("result", "error_type"),
+    [
+        ((1, 15), APIRateLimitExceededError),
+        ((2, 15), APIRateLimitExceededError),
+        ((3, 1), APICapacityExceededError),
+        ((4, 3600), APIDailyBudgetExceededError),
+    ],
+)
+def test_redis_guard_maps_shared_quota_rejections(result, error_type) -> None:
+    guard = RedisModelAPITrafficGuard(
+        TrafficGuardSettings(redis_url="redis://unused"),
+        redis_client=FakeRedis(result),
+    )
+
+    with pytest.raises(error_type):
+        guard.acquire("client-1", None)

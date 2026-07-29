@@ -16,5 +16,6 @@ frontend/dist/
 .mypy_cache/
 .ruff_cache/
 *.log
+backend/data/*.db*
 dist/
 build/

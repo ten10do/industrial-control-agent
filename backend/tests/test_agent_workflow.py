@@ -4,7 +4,12 @@ import pytest
 
 import backend.validation as validation_module
 import backend.validation.engine as validation_engine_module
-from backend.agent_core import generate_control_plan, optimize_control_plan
+from backend.agent_core import (
+    MAX_IO_POINTS,
+    MAX_LLM_RESPONSE_CHARS,
+    generate_control_plan,
+    optimize_control_plan,
+)
 from backend.errors import LLMResponseFormatError, SkillExecutionError
 from backend.llm_client import FakeLLMClient
 from backend.schemas import GenerateRequest, OptimizeRequest
@@ -34,6 +39,11 @@ def test_generate_control_plan_returns_stable_fields() -> None:
         "report_markdown",
         "safety_notice",
         "validation_report",
+        "safety_gate",
+        "plan_id",
+        "parent_plan_id",
+        "content_hash",
+        "created_at",
     }
     assert isinstance(response.io_table, list)
     assert response.io_table
@@ -42,6 +52,9 @@ def test_generate_control_plan_returns_stable_fields() -> None:
     assert response.safety_notice in response.report_markdown
     assert response.validation_report is not None
     assert response.validation_report.total_rules == 14
+    assert response.safety_gate is not None
+    assert response.safety_gate.review_required is True
+    assert response.safety_gate.export_allowed is False
 
 
 def test_optimize_control_plan_returns_stable_fields() -> None:
@@ -57,6 +70,11 @@ def test_optimize_control_plan_returns_stable_fields() -> None:
         "change_summary",
         "safety_notice",
         "validation_report",
+        "safety_gate",
+        "plan_id",
+        "parent_plan_id",
+        "content_hash",
+        "created_at",
     }
     assert response.optimized_report.strip()
     assert response.change_summary.strip()
@@ -64,6 +82,7 @@ def test_optimize_control_plan_returns_stable_fields() -> None:
     assert response.safety_notice in response.optimized_report
     assert response.validation_report is not None
     assert response.validation_report.total_rules == 14
+    assert response.safety_gate is not None
 
 
 def test_optimize_uses_original_report_only_for_applicability_and_optimized_text_for_evidence() -> None:
@@ -182,6 +201,32 @@ def test_llm_returns_invalid_json() -> None:
 
     with pytest.raises(LLMResponseFormatError):
         generate_control_plan(_generate_request(), InvalidJsonLLM())
+
+
+def test_llm_response_over_size_limit_is_rejected() -> None:
+    class OversizedLLM:
+        def chat(self, prompt: str, system_prompt: str | None = None, request_id: str | None = None) -> str:
+            return "{" + (" " * MAX_LLM_RESPONSE_CHARS) + "}"
+
+    with pytest.raises(LLMResponseFormatError):
+        generate_control_plan(_generate_request(), OversizedLLM())
+
+
+def test_io_table_over_row_limit_is_rejected() -> None:
+    class TooManyRowsLLM:
+        def chat(self, prompt: str, system_prompt: str | None = None, request_id: str | None = None) -> str:
+            payload = {
+                "requirement_analysis": "ok",
+                "io_table": [{} for _ in range(MAX_IO_POINTS + 1)],
+                "control_logic": "ok",
+                "safety_design": "ok",
+                "ladder_idea": "ok",
+                "report_markdown": "ok",
+            }
+            return json.dumps(payload)
+
+    with pytest.raises(SkillExecutionError):
+        generate_control_plan(_generate_request(), TooManyRowsLLM())
 
 
 def test_intermediate_skill_exception() -> None:

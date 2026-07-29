@@ -1,4 +1,4 @@
-import { Activity, Bot, Factory, Gauge } from "lucide-react";
+import { Activity, Bot, Factory, Gauge, LogOut, UserRound } from "lucide-react";
 
 
 const STATUS_LABELS = {
@@ -8,7 +8,13 @@ const STATUS_LABELS = {
 };
 
 
-function IndustrialHeader({ backendStatus, modelProvider }) {
+function IndustrialHeader({
+  backendStatus,
+  modelProvider,
+  authEnabled = false,
+  userName = "",
+  onLogout,
+}) {
   return (
     <header className="industrial-header">
       <div className="header-brand">
@@ -37,6 +43,16 @@ function IndustrialHeader({ backendStatus, modelProvider }) {
           <span>Mode</span>
           <strong>Design Assistant</strong>
         </div>
+        {authEnabled && userName && (
+          <div className="header-status identity">
+            <UserRound size={16} aria-hidden="true" />
+            <span>Identity</span>
+            <strong>{userName}</strong>
+            <button type="button" onClick={onLogout} aria-label="退出登录">
+              <LogOut size={15} aria-hidden="true" />
+            </button>
+          </div>
+        )}
       </div>
     </header>
   );

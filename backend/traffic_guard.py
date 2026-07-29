@@ -1,3 +1,4 @@
+import hashlib
 import math
 import os
 import secrets
@@ -11,12 +12,14 @@ if __package__:
     from .errors import (
         APIAccessDeniedError,
         APICapacityExceededError,
+        APIDailyBudgetExceededError,
         APIRateLimitExceededError,
     )
 else:
     from errors import (
         APIAccessDeniedError,
         APICapacityExceededError,
+        APIDailyBudgetExceededError,
         APIRateLimitExceededError,
     )
 
@@ -25,6 +28,8 @@ DEFAULT_MAX_CONCURRENCY = 2
 DEFAULT_GLOBAL_REQUESTS = 12
 DEFAULT_CLIENT_REQUESTS = 4
 DEFAULT_WINDOW_SECONDS = 60.0
+DEFAULT_DAILY_REQUESTS = 200
+DAILY_WINDOW_SECONDS = 86400.0
 MAX_TRACKED_CLIENTS = 4096
 
 
@@ -71,8 +76,11 @@ class TrafficGuardSettings:
     global_requests: int = DEFAULT_GLOBAL_REQUESTS
     client_requests: int = DEFAULT_CLIENT_REQUESTS
     window_seconds: float = DEFAULT_WINDOW_SECONDS
+    daily_requests: int = DEFAULT_DAILY_REQUESTS
     auth_required: bool = False
     access_token: str | None = None
+    redis_url: str | None = None
+    redis_key_prefix: str = "industrial-control-agent"
 
     def __post_init__(self) -> None:
         if self.auth_required and not self.access_token:
@@ -114,12 +122,23 @@ class TrafficGuardSettings:
                 "MODEL_API_RATE_WINDOW_SECONDS",
                 DEFAULT_WINDOW_SECONDS,
             ),
+            daily_requests=_positive_int(
+                values,
+                "MODEL_API_DAILY_REQUESTS",
+                DEFAULT_DAILY_REQUESTS,
+            ),
             auth_required=_boolean(
                 values,
                 "MODEL_API_AUTH_REQUIRED",
                 False,
             ),
             access_token=access_token,
+            redis_url=values.get("MODEL_API_REDIS_URL", "").strip() or None,
+            redis_key_prefix=values.get(
+                "MODEL_API_REDIS_KEY_PREFIX",
+                "industrial-control-agent",
+            ).strip()
+            or "industrial-control-agent",
         )
 
 
@@ -150,6 +169,7 @@ class ModelAPITrafficGuard:
         self._clock = clock or time.monotonic
         self._lock = threading.Lock()
         self._global_requests: deque[float] = deque()
+        self._daily_requests: deque[float] = deque()
         self._client_requests: OrderedDict[str, deque[float]] = OrderedDict()
         self._active_requests = 0
 
@@ -169,6 +189,11 @@ class ModelAPITrafficGuard:
         with self._lock:
             now = self._clock()
             self._prune(self._global_requests, now)
+            self._prune(self._daily_requests, now, DAILY_WINDOW_SECONDS)
+            if len(self._daily_requests) >= self.settings.daily_requests:
+                raise APIDailyBudgetExceededError(
+                    self._retry_after(self._daily_requests, now, DAILY_WINDOW_SECONDS),
+                )
             if len(self._global_requests) >= self.settings.global_requests:
                 raise APIRateLimitExceededError(
                     self._retry_after(self._global_requests, now),
@@ -192,6 +217,7 @@ class ModelAPITrafficGuard:
                 self._client_requests[normalized_client_id] = client_requests
             self._client_requests.move_to_end(normalized_client_id)
             self._global_requests.append(now)
+            self._daily_requests.append(now)
             client_requests.append(now)
             self._active_requests += 1
 
@@ -208,16 +234,136 @@ class ModelAPITrafficGuard:
         ):
             raise APIAccessDeniedError()
 
-    def _prune(self, timestamps: deque[float], now: float) -> None:
-        cutoff = now - self.settings.window_seconds
+    def _prune(
+        self,
+        timestamps: deque[float],
+        now: float,
+        window_seconds: float | None = None,
+    ) -> None:
+        cutoff = now - (window_seconds or self.settings.window_seconds)
         while timestamps and timestamps[0] <= cutoff:
             timestamps.popleft()
 
-    def _retry_after(self, timestamps: deque[float], now: float) -> int:
-        remaining = timestamps[0] + self.settings.window_seconds - now
+    def _retry_after(
+        self,
+        timestamps: deque[float],
+        now: float,
+        window_seconds: float | None = None,
+    ) -> int:
+        remaining = timestamps[0] + (window_seconds or self.settings.window_seconds) - now
         return max(1, math.ceil(remaining))
 
     def _release(self) -> None:
         with self._lock:
             if self._active_requests > 0:
                 self._active_requests -= 1
+
+
+REDIS_ACQUIRE_SCRIPT = """
+redis.call('ZREMRANGEBYSCORE', KEYS[4], 0, ARGV[8])
+local active = tonumber(redis.call('ZCARD', KEYS[4]) or '0')
+if active >= tonumber(ARGV[3]) then return {3, 1} end
+local daily = tonumber(redis.call('GET', KEYS[3]) or '0')
+if daily >= tonumber(ARGV[4]) then return {4, redis.call('TTL', KEYS[3])} end
+local global_count = tonumber(redis.call('GET', KEYS[1]) or '0')
+if global_count >= tonumber(ARGV[1]) then return {1, redis.call('TTL', KEYS[1])} end
+local client_count = tonumber(redis.call('GET', KEYS[2]) or '0')
+if client_count >= tonumber(ARGV[2]) then return {2, redis.call('TTL', KEYS[2])} end
+redis.call('INCR', KEYS[1])
+redis.call('EXPIRE', KEYS[1], ARGV[5])
+redis.call('INCR', KEYS[2])
+redis.call('EXPIRE', KEYS[2], ARGV[5])
+redis.call('INCR', KEYS[3])
+redis.call('EXPIRE', KEYS[3], ARGV[6])
+redis.call('ZADD', KEYS[4], ARGV[8] + (ARGV[7] * 1000), ARGV[9])
+redis.call('EXPIRE', KEYS[4], ARGV[7] + 1)
+return {0, 0}
+"""
+
+REDIS_RELEASE_SCRIPT = """
+return redis.call('ZREM', KEYS[1], ARGV[1])
+"""
+
+
+class RedisModelAPITrafficGuard:
+    """Cross-process quotas backed by atomic Redis scripts."""
+
+    def __init__(self, settings: TrafficGuardSettings, redis_client=None) -> None:
+        self.settings = settings
+        if redis_client is None:
+            if not settings.redis_url:
+                raise ValueError("MODEL_API_REDIS_URL is required for Redis traffic control")
+            from redis import Redis
+
+            redis_client = Redis.from_url(
+                settings.redis_url,
+                socket_connect_timeout=3,
+                socket_timeout=3,
+            )
+        self._redis = redis_client
+        self._active_key = f"{settings.redis_key_prefix}:active"
+
+    def ping(self) -> None:
+        self._redis.ping()
+
+    def acquire(self, client_id: str, access_token: str | None) -> TrafficGuardLease:
+        self._authorize(access_token)
+        now = time.time()
+        window_seconds = max(1, math.ceil(self.settings.window_seconds))
+        window_bucket = int(now // window_seconds)
+        daily_bucket = int(now // int(DAILY_WINDOW_SECONDS))
+        client_digest = hashlib.sha256(
+            (client_id.strip() or "unknown").encode("utf-8"),
+        ).hexdigest()[:24]
+        prefix = self.settings.redis_key_prefix
+        keys = (
+            f"{prefix}:window:{window_bucket}:global",
+            f"{prefix}:window:{window_bucket}:client:{client_digest}",
+            f"{prefix}:day:{daily_bucket}",
+            self._active_key,
+        )
+        daily_ttl = max(1, math.ceil(((daily_bucket + 1) * DAILY_WINDOW_SECONDS) - now))
+        lease_ttl = 120
+        lease_id = secrets.token_hex(16)
+        result = self._redis.eval(
+            REDIS_ACQUIRE_SCRIPT,
+            len(keys),
+            *keys,
+            self.settings.global_requests,
+            self.settings.client_requests,
+            self.settings.max_concurrency,
+            self.settings.daily_requests,
+            window_seconds + 1,
+            daily_ttl,
+            lease_ttl,
+            math.floor(now * 1000),
+            lease_id,
+        )
+        code = int(result[0])
+        retry_after = max(1, int(result[1] or 1))
+        if code in {1, 2}:
+            raise APIRateLimitExceededError(retry_after)
+        if code == 3:
+            raise APICapacityExceededError()
+        if code == 4:
+            raise APIDailyBudgetExceededError(retry_after)
+        return TrafficGuardLease(lambda: self._release(lease_id))
+
+    def _authorize(self, access_token: str | None) -> None:
+        if not self.settings.auth_required:
+            return
+        required_token = self.settings.access_token
+        assert required_token is not None
+        if access_token is None or not secrets.compare_digest(
+            access_token.encode("utf-8"),
+            required_token.encode("utf-8"),
+        ):
+            raise APIAccessDeniedError()
+
+    def _release(self, lease_id: str) -> None:
+        self._redis.eval(REDIS_RELEASE_SCRIPT, 1, self._active_key, lease_id)
+
+    def close(self) -> None:
+        close = getattr(self._redis, "close", None)
+        if callable(close):
+            close()

@@ -1,9 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  cancelModelJob,
+  checkReadiness,
+  exportPlanMarkdown,
   generateControlPlan,
   MODEL_API_REQUEST_TIMEOUT_MS,
   optimizeControlPlan,
+  reviewPlan,
+  setAccessTokenProvider,
 } from "./api";
 
 
@@ -17,6 +22,7 @@ const PAYLOAD = {
 
 
 afterEach(() => {
+  setAccessTokenProvider(() => "");
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -87,6 +93,197 @@ describe("model API traffic guard errors", () => {
       retryAfterSeconds: retryAfter ? Number(retryAfter) : null,
     });
   });
+
+  it("reuses the idempotency key when the same failed mutation is retried", async () => {
+    const retryPayload = { ...PAYLOAD, control_object: "Retry motor" };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ code: "API_CAPACITY_EXCEEDED", message: "Busy" }),
+          {
+            status: 503,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          job_id: "job-1",
+          status: "succeeded",
+          result: { plan_id: "plan-1" },
+        }), {
+          status: 202,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(generateControlPlan(retryPayload)).rejects.toMatchObject({
+      status: 503,
+    });
+    await expect(generateControlPlan(retryPayload)).resolves.toMatchObject({
+      plan_id: "plan-1",
+    });
+
+    const firstKey = fetchMock.mock.calls[0][1].headers["Idempotency-Key"];
+    const secondKey = fetchMock.mock.calls[1][1].headers["Idempotency-Key"];
+    expect(secondKey).toBe(firstKey);
+  });
+});
+
+
+describe("backend readiness", () => {
+  it("uses the readiness endpoint before enabling model actions", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ status: "ready", checks: {} }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(checkReadiness()).resolves.toMatchObject({ status: "ready" });
+    expect(fetchMock.mock.calls[0][0]).toMatch(/\/ready$/);
+  });
+});
+
+
+describe("durable model jobs", () => {
+  it("polls queued work until the persisted result succeeds", async () => {
+    vi.useFakeTimers();
+    const statuses = [];
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          job_id: "job-1",
+          status: "queued",
+          progress: 0,
+          attempts: 0,
+          max_attempts: 3,
+        }), { status: 202, headers: { "Content-Type": "application/json" } }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          job_id: "job-1",
+          status: "running",
+          progress: 10,
+          attempts: 1,
+          max_attempts: 3,
+        }), { status: 200, headers: { "Content-Type": "application/json" } }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          job_id: "job-1",
+          status: "succeeded",
+          progress: 100,
+          attempts: 1,
+          max_attempts: 3,
+          result: { plan_id: "plan-1" },
+        }), { status: 200, headers: { "Content-Type": "application/json" } }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pending = generateControlPlan(PAYLOAD, {
+      onStatus: (job) => statuses.push(job.status),
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(1000);
+
+    await expect(pending).resolves.toEqual({ plan_id: "plan-1" });
+    expect(statuses).toEqual(["queued", "running", "succeeded"]);
+    expect(fetchMock.mock.calls[0][0]).toMatch(/\/jobs\/generate$/);
+    expect(fetchMock.mock.calls[1][0]).toMatch(/\/jobs\/job-1$/);
+  });
+
+  it("sends cancellation to the persisted job endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ job_id: "job/1", status: "cancel_requested" }), {
+        status: 202,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(cancelModelJob("job/1")).resolves.toMatchObject({
+      status: "cancel_requested",
+    });
+    expect(fetchMock.mock.calls[0][0]).toMatch(/\/jobs\/job%2F1\/cancel$/);
+    expect(fetchMock.mock.calls[0][1].method).toBe("POST");
+  });
+
+  it("keeps the idempotency key when polling is interrupted", async () => {
+    vi.useFakeTimers();
+    const retryPayload = { ...PAYLOAD, control_object: "Recoverable motor" };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          job_id: "job-recover",
+          status: "queued",
+        }), { status: 202, headers: { "Content-Type": "application/json" } }),
+      )
+      .mockRejectedValueOnce(new TypeError("network unavailable"))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          job_id: "job-recover",
+          status: "succeeded",
+          result: { plan_id: "plan-recover" },
+        }), { status: 202, headers: { "Content-Type": "application/json" } }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const interrupted = generateControlPlan(retryPayload);
+    const interruptedResult = expect(interrupted).rejects.toMatchObject({
+      name: "ApiRequestError",
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    await interruptedResult;
+    await expect(generateControlPlan(retryPayload)).resolves.toEqual({
+      plan_id: "plan-recover",
+    });
+
+    const firstKey = fetchMock.mock.calls[0][1].headers["Idempotency-Key"];
+    const retryKey = fetchMock.mock.calls[2][1].headers["Idempotency-Key"];
+    expect(retryKey).toBe(firstKey);
+  });
+});
+
+
+describe("persisted plan review and export", () => {
+  it("sends the OIDC access token in the authorization header", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ decision: "approved" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    setAccessTokenProvider(() => "oidc-access-token");
+
+    await reviewPlan(
+      "plan/1",
+      { decision: "approved", comment: "" },
+    );
+
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toMatch(/\/plans\/plan%2F1\/reviews$/);
+    expect(options.headers.Authorization).toBe("Bearer oidc-access-token");
+    expect(options.headers["Idempotency-Key"]).toMatch(/^[A-Za-z0-9._:-]{8,128}$/);
+    expect(options.body).not.toContain("oidc-access-token");
+  });
+
+  it("returns Markdown text from the controlled export endpoint", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response("# Approved plan", {
+          status: 200,
+          headers: { "Content-Type": "text/markdown" },
+        }),
+      ),
+    );
+
+    await expect(exportPlanMarkdown("plan-1")).resolves.toBe("# Approved plan");
+  });
 });
 
 
@@ -128,8 +325,12 @@ describe("model API timeout budget", () => {
   it("clears the model timeout after a successful response", async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ ok: true }), {
-        status: 200,
+      new Response(JSON.stringify({
+        job_id: "job-1",
+        status: "succeeded",
+        result: { ok: true },
+      }), {
+        status: 202,
         headers: { "Content-Type": "application/json" },
       }),
     );

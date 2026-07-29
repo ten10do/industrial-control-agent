@@ -20,6 +20,20 @@ jobs:
   backend:
     name: Backend Tests
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: industrial_control_agent
+          POSTGRES_USER: agent
+          POSTGRES_PASSWORD: test-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agent -d industrial_control_agent"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - uses: actions/checkout@v4
@@ -38,7 +52,15 @@ jobs:
       - name: Check Python syntax
         run: python -m compileall -q backend
 
+      - name: Apply PostgreSQL migrations
+        env:
+          DATABASE_URL: postgresql+psycopg://agent:test-password@localhost:5432/industrial_control_agent
+          DATABASE_SSLMODE: disable
+        run: python -m alembic upgrade head
+
       - name: Run backend tests
+        env:
+          TEST_POSTGRES_URL: postgresql+psycopg://agent:test-password@localhost:5432/industrial_control_agent
         run: python -m pytest backend/tests -v
 
   frontend:

@@ -36,6 +36,7 @@ class LLMClientError(RuntimeError):
 
 DEFAULT_ATTEMPT_TIMEOUT_SECONDS = 60.0
 DEFAULT_TOTAL_TIMEOUT_SECONDS = 90.0
+DEFAULT_MAX_OUTPUT_TOKENS = 8192
 RETRY_JITTER_RATIO = 0.25
 
 
@@ -48,6 +49,7 @@ class DeepSeekLLMClient:
         temperature: float = 0.2,
         timeout: float = DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
         total_timeout: float = DEFAULT_TOTAL_TIMEOUT_SECONDS,
+        max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
         max_retries: int = 2,
         backoff_seconds: float = 0.25,
         sleep_fn: Callable[[float], None] = time.sleep,
@@ -64,6 +66,7 @@ class DeepSeekLLMClient:
         self.temperature = temperature
         self.timeout = timeout
         self.total_timeout = total_timeout
+        self.max_output_tokens = max_output_tokens
         self.max_retries = max_retries
         self.backoff_seconds = backoff_seconds
         self.sleep_fn = sleep_fn
@@ -93,6 +96,8 @@ class DeepSeekLLMClient:
                     model=self.model,
                     messages=messages,
                     temperature=self.temperature,
+                    max_tokens=self.max_output_tokens,
+                    response_format={"type": "json_object"},
                     timeout=attempt_timeout,
                 )
             except AuthenticationError as exc:
