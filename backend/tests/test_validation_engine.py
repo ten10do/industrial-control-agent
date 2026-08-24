@@ -144,7 +144,7 @@ def test_report_summary_counts_and_risk_are_correct() -> None:
     assert report.medium_count == 0
     assert report.low_count == 0
     assert report.risk_score == 45
-    assert report.risk_level == RiskLevel.HIGH
+    assert report.risk_level == RiskLevel.CRITICAL
     assert [result.rule_id for result in report.issues] == ["WARN", "FAIL"]
 
 

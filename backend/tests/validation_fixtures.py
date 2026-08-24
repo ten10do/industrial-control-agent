@@ -217,7 +217,7 @@ SCENARIOS: tuple[ScenarioCase, ...] = (
             io_points=_NO_ESTOP_IO,
         ),
         30,
-        RiskLevel.HIGH,
+        RiskLevel.CRITICAL,
         ("EMERGENCY_STOP_MISSING",),
     ),
     ScenarioCase(
@@ -228,7 +228,7 @@ SCENARIOS: tuple[ScenarioCase, ...] = (
             io_points=MOTOR_IO,
         ),
         30,
-        RiskLevel.HIGH,
+        RiskLevel.CRITICAL,
         ("MUTUAL_INTERLOCK_MISSING",),
     ),
     ScenarioCase(
@@ -239,7 +239,7 @@ SCENARIOS: tuple[ScenarioCase, ...] = (
             io_points=PUMP_IO,
         ),
         30,
-        RiskLevel.HIGH,
+        RiskLevel.CRITICAL,
         ("PUMP_DRY_RUN_PROTECTION_MISSING",),
     ),
     ScenarioCase(
@@ -250,7 +250,7 @@ SCENARIOS: tuple[ScenarioCase, ...] = (
             io_points=_VALVE_IO,
         ),
         15,
-        RiskLevel.MEDIUM,
+        RiskLevel.HIGH,
         ("ACTION_TIMEOUT_PROTECTION_MISSING",),
     ),
     ScenarioCase(
@@ -261,14 +261,14 @@ SCENARIOS: tuple[ScenarioCase, ...] = (
             io_points=MOTOR_IO,
         ),
         15,
-        RiskLevel.MEDIUM,
+        RiskLevel.HIGH,
         ("MODE_INTERLOCK_MISSING",),
     ),
     ScenarioCase(
         "重复 I/O 地址",
         monitoring_context(io_points=_DUPLICATE_ADDRESS_IO),
         15,
-        RiskLevel.MEDIUM,
+        RiskLevel.HIGH,
         ("IO_DUPLICATE_ADDRESS",),
     ),
     ScenarioCase(

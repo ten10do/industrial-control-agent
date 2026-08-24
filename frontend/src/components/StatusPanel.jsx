@@ -17,7 +17,7 @@ function StatusCard({ icon: Icon, label, value, tone = "neutral" }) {
 
 
 function StatusPanel({ backendStatus, selectedExampleName, hasInput, hasResult }) {
-  const apiValue = backendStatus === "online"
+  const apiValue = backendStatus === "online" || backendStatus === "warming_up"
     ? "Online"
     : backendStatus === "checking"
       ? "Checking"

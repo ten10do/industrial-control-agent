@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import sys
 import time
 from contextvars import ContextVar
@@ -18,6 +19,19 @@ def configure_logging(level: int = logging.INFO) -> None:
         handler.setFormatter(logging.Formatter("%(message)s"))
         logger.addHandler(handler)
     logger.propagate = False
+
+
+def setup_logging(level: str | int | None = None) -> logging.Logger:
+    """Backward-compatible logging setup used by scripts and deployments."""
+    resolved_level: int
+    if isinstance(level, int):
+        resolved_level = level
+    else:
+        level_name = (level or os.getenv("LOG_LEVEL", "INFO")).strip().upper()
+        candidate = logging.getLevelNamesMapping().get(level_name)
+        resolved_level = candidate if isinstance(candidate, int) else logging.INFO
+    configure_logging(resolved_level)
+    return logger
 
 
 def set_request_id(request_id: str) -> None:

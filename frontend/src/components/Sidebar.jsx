@@ -16,6 +16,7 @@ const STATUS_META = {
   checking: { label: "正在检测", className: "status-checking" },
   online: { label: "连接正常", className: "status-online" },
   offline: { label: "未连接", className: "status-offline" },
+  warming_up: { label: "正在启动", className: "status-warming" },
 };
 
 const NAV_ITEMS = [

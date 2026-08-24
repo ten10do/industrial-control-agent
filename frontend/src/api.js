@@ -126,8 +126,23 @@ async function request(path, options = {}) {
 }
 
 
-export function checkHealth() {
-  return request("/health", { timeoutMs: 5000 });
+export async function checkHealth({ maxRetries = 3, baseDelayMs = 2000 } = {}) {
+  let lastError = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    try {
+      return await request("/health", {
+        timeoutMs: attempt === 0 ? 5000 : 15000,
+      });
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxRetries) {
+        await new Promise((resolve) => {
+          window.setTimeout(resolve, baseDelayMs * (2 ** attempt));
+        });
+      }
+    }
+  }
+  throw lastError;
 }
 
 
@@ -190,6 +205,15 @@ export function checkReadiness() {
 
 export function fetchExamples() {
   return request("/examples", { timeoutMs: 10000 });
+}
+
+
+export function validatePlan(payload) {
+  return request("/validate", {
+    method: "POST",
+    body: JSON.stringify(payload),
+    timeoutMs: 30000,
+  });
 }
 
 

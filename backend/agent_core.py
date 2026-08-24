@@ -101,9 +101,11 @@ def _normalize_io_table(value: Any) -> list[IOPoint]:
 
     rows: list[IOPoint] = []
     try:
-        for item in value:
+        for idx, item in enumerate(value):
             if not isinstance(item, dict):
-                item = {}
+                raise SkillExecutionError(
+                    f"Workflow step returned a non-object I/O row at index {idx}: {type(item).__name__}"
+                )
             rows.append(
                 IOPoint(
                     address=scalar_text(item.get("address", "")),

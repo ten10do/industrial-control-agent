@@ -2,6 +2,7 @@ import json
 import math
 import os
 import random
+import threading
 import time
 from collections.abc import Callable
 from datetime import timezone
@@ -34,6 +35,41 @@ class LLMClientError(RuntimeError):
     """Sanitized model-service error suitable for the API layer."""
 
 
+class CircuitBreaker:
+    """Stop model calls briefly after repeated upstream failures."""
+
+    def __init__(
+        self,
+        failure_threshold: int = 3,
+        cooldown_seconds: float = 30.0,
+        clock_fn: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._threshold = failure_threshold
+        self._cooldown = cooldown_seconds
+        self._clock_fn = clock_fn
+        self._failures = 0
+        self._last_failure_time = 0.0
+        self._lock = threading.Lock()
+
+    def record_failure(self) -> None:
+        with self._lock:
+            self._failures += 1
+            self._last_failure_time = self._clock_fn()
+
+    def record_success(self) -> None:
+        with self._lock:
+            self._failures = 0
+
+    def is_open(self) -> bool:
+        with self._lock:
+            if self._failures < self._threshold:
+                return False
+            if self._clock_fn() - self._last_failure_time >= self._cooldown:
+                self._failures = 0
+                return False
+            return True
+
+
 DEFAULT_ATTEMPT_TIMEOUT_SECONDS = 60.0
 DEFAULT_TOTAL_TIMEOUT_SECONDS = 90.0
 DEFAULT_MAX_OUTPUT_TOKENS = 8192
@@ -56,6 +92,7 @@ class DeepSeekLLMClient:
         clock_fn: Callable[[], float] = time.monotonic,
         wall_clock_fn: Callable[[], float] = time.time,
         random_fn: Callable[[], float] = random.random,
+        circuit_breaker: CircuitBreaker | None = None,
         client: Any | None = None,
     ) -> None:
         resolved_key = api_key or os.getenv("DEEPSEEK_API_KEY")
@@ -73,6 +110,7 @@ class DeepSeekLLMClient:
         self.clock_fn = clock_fn
         self.wall_clock_fn = wall_clock_fn
         self.random_fn = random_fn
+        self.circuit_breaker = circuit_breaker or CircuitBreaker(clock_fn=clock_fn)
         self.client = client or OpenAI(
             api_key=resolved_key,
             base_url=base_url,
@@ -90,6 +128,8 @@ class DeepSeekLLMClient:
         response = None
         deadline = self.clock_fn() + self.total_timeout
         for attempt in range(self.max_retries + 1):
+            if self.circuit_breaker.is_open():
+                raise LLMClientError("Model service is temporarily unavailable")
             attempt_timeout = self._attempt_timeout(deadline)
             try:
                 response = self.client.chat.completions.create(
@@ -101,9 +141,11 @@ class DeepSeekLLMClient:
                     timeout=attempt_timeout,
                 )
             except AuthenticationError as exc:
+                self.circuit_breaker.record_failure()
                 self._raise_if_deadline_exceeded(deadline, retry_count, request_id)
                 raise LLMClientError("Model service authentication failed") from exc
             except APITimeoutError as exc:
+                self.circuit_breaker.record_failure()
                 self._raise_if_deadline_exceeded(deadline, retry_count, request_id)
                 if attempt >= self.max_retries:
                     self._log_retry("error", retry_count, "APITimeoutError", request_id)
@@ -112,6 +154,7 @@ class DeepSeekLLMClient:
                 self._log_retry("retry", retry_count, "APITimeoutError", request_id)
                 self._sleep_before_retry(attempt, exc, deadline)
             except (APIConnectionError, RateLimitError) as exc:
+                self.circuit_breaker.record_failure()
                 self._raise_if_deadline_exceeded(deadline, retry_count, request_id)
                 if attempt >= self.max_retries:
                     self._log_retry("error", retry_count, type(exc).__name__, request_id)
@@ -120,6 +163,7 @@ class DeepSeekLLMClient:
                 self._log_retry("retry", retry_count, type(exc).__name__, request_id)
                 self._sleep_before_retry(attempt, exc, deadline)
             except APIError as exc:
+                self.circuit_breaker.record_failure()
                 self._raise_if_deadline_exceeded(deadline, retry_count, request_id)
                 status_code = getattr(exc, "status_code", None)
                 if status_code is not None and status_code < 500 and status_code not in {408, 409, 429}:
@@ -131,9 +175,11 @@ class DeepSeekLLMClient:
                 self._log_retry("retry", retry_count, "APIError", request_id)
                 self._sleep_before_retry(attempt, exc, deadline)
             except OpenAIError as exc:
+                self.circuit_breaker.record_failure()
                 self._raise_if_deadline_exceeded(deadline, retry_count, request_id)
                 raise LLMClientError("Model service call failed") from exc
             except Exception as exc:
+                self.circuit_breaker.record_failure()
                 self._raise_if_deadline_exceeded(deadline, retry_count, request_id)
                 raise LLMClientError("Model service call failed") from exc
             else:
@@ -142,7 +188,9 @@ class DeepSeekLLMClient:
 
         content = response.choices[0].message.content if response else ""
         if not content or not content.strip():
+            self.circuit_breaker.record_failure()
             raise LLMResponseFormatError()
+        self.circuit_breaker.record_success()
         return content
 
     def _log_retry(self, status: str, retry_count: int, error_type: str, request_id: Optional[str]) -> None:

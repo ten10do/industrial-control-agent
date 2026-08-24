@@ -66,7 +66,7 @@ REVIEW_SCENARIOS = (
         ),
         ("EMERGENCY_STOP_MISSING",),
         30,
-        RiskLevel.HIGH,
+        RiskLevel.CRITICAL,
     ),
     (
         "明确写着没有过载保护的方案",
@@ -80,7 +80,7 @@ REVIEW_SCENARIOS = (
             "ALARM_COVERAGE_INCOMPLETE",
         ),
         23,
-        RiskLevel.MEDIUM,
+        RiskLevel.HIGH,
     ),
     (
         "正反转且具有互锁的方案",
@@ -98,7 +98,7 @@ REVIEW_SCENARIOS = (
         _existing_scenario("正反转无互锁"),
         ("MUTUAL_INTERLOCK_MISSING",),
         30,
-        RiskLevel.HIGH,
+        RiskLevel.CRITICAL,
     ),
     (
         "水泵具备低液位防干转",
@@ -112,7 +112,7 @@ REVIEW_SCENARIOS = (
         _existing_scenario("水泵缺少低液位保护"),
         ("PUMP_DRY_RUN_PROTECTION_MISSING",),
         30,
-        RiskLevel.HIGH,
+        RiskLevel.CRITICAL,
     ),
     (
         "阀门具备到位反馈和超时保护",

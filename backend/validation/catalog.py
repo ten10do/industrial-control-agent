@@ -578,6 +578,7 @@ OUTPUT_DEVICE_TERMS = (
     "电机",
     "水泵",
     "风机",
+    "阀",
     "电磁阀",
     "接触器",
     "指示灯",
@@ -634,6 +635,7 @@ ACTUATOR_TERMS = (
     "输送",
     "传送",
     "阀门",
+    "阀",
     "电磁阀",
     "气缸",
     "升降机",
@@ -671,6 +673,7 @@ MOTION_ACTUATOR_TERMS = (
     "输送",
     "传送",
     "阀门",
+    "阀",
     "气缸",
     "升降",
     "机械",
@@ -702,6 +705,7 @@ WATER_SYSTEM_TERMS = (
 SENSOR_TERMS = ("传感器", "检测器", "变送器", "sensor", "detector", "transmitter")
 TIMEOUT_ACTUATOR_TERMS = (
     "阀门",
+    "阀",
     "电磁阀",
     "升降",
     "输送",
@@ -977,7 +981,7 @@ SAFE_OUTPUT_DEVICE_GROUPS = (
     ),
     (
         "阀门",
-        ("阀门", "电磁阀", "valve", "solenoid"),
+        ("阀门", "阀", "电磁阀", "valve", "solenoid"),
         (
             "阀门关闭",
             "阀门打开",
@@ -1147,7 +1151,7 @@ FEEDBACK_DEVICE_GROUPS = (
     ("水泵", ("水泵", "泵", "pump")),
     ("风机", ("风机", "fan")),
     ("压缩机", ("压缩机", "compressor")),
-    ("阀门", ("阀门", "电磁阀", "valve", "solenoid")),
+    ("阀门", ("阀门", "阀", "电磁阀", "valve", "solenoid")),
     ("输送机构", ("输送", "传送", "conveyor")),
     ("升降机构", ("升降", "lift")),
     ("气缸", ("气缸", "cylinder")),

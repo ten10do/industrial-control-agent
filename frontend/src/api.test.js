@@ -2,13 +2,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   cancelModelJob,
+  checkHealth,
   checkReadiness,
   exportPlanMarkdown,
+  fetchExamples,
   generateControlPlan,
   MODEL_API_REQUEST_TIMEOUT_MS,
   optimizeControlPlan,
   reviewPlan,
   setAccessTokenProvider,
+  validatePlan,
 } from "./api";
 
 
@@ -340,5 +343,56 @@ describe("model API timeout budget", () => {
 
     expect(vi.getTimerCount()).toBe(0);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe("health, examples, and model-free validation APIs", () => {
+  it("returns health data without retrying after a successful request", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        status: "ok",
+        version: "1.0.0",
+        model: "deepseek-chat",
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(checkHealth({ maxRetries: 0 })).resolves.toMatchObject({ status: "ok" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns backend examples", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ examples: [{ name: "test" }] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    await expect(fetchExamples()).resolves.toEqual({ examples: [{ name: "test" }] });
+  });
+
+  it("posts an existing plan to the model-free validation endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        validation_report: { total_rules: 14, risk_level: "low", risk_score: 0 },
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(validatePlan({ plan_text: "test" })).resolves.toMatchObject({
+      validation_report: { total_rules: 14 },
+    });
+    expect(fetchMock.mock.calls[0][0]).toMatch(/\/validate$/);
   });
 });

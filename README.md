@@ -220,7 +220,7 @@ SQLite 仅用于本地开发和自动化测试。生产 PostgreSQL 使用连接�
 
 | 验证项 | 命令 | 当前结果 |
 | --- | --- | --- |
-| 后端回归测试 | `python -m pytest backend\tests -q` | 228 passed，1 个 PostgreSQL CI 测试在本地跳过 |
+| 后端回归测试 | `python -m pytest backend\tests -q` | 335 passed，1 个 PostgreSQL CI 测试在本地跳过 |
 | 前端组件测试 | `npm.cmd run test` | 20 passed |
 | 前端生产构建 | `npm.cmd run build` | 通过 |
 
@@ -230,7 +230,7 @@ GitHub Actions CI 在以下场景自动触发：
 - 创建或更新面向 `main` 的 Pull Request
 - 手动运行 `workflow_dispatch`
 
-CI 的 `Backend Tests` 任务执行 Python 语法检查和 pytest 后端回归测试；`Frontend Build` 任务执行 `npm ci`、前端组件测试和 Vite 生产构建。
+CI 的 `Backend Tests` 任务执行 PostgreSQL 迁移、Python 语法检查、覆盖率门槛和后端回归测试；`Frontend Build` 任务执行 `npm ci`、ESLint、前端组件测试和 Vite 生产构建。
 
 ## 项目亮点
 

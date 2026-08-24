@@ -21,6 +21,7 @@ if __package__:
         PlanReviewRequiredError,
         PlanVersionConflictError,
         SelfReviewDeniedError,
+        SkillExecutionError,
     )
     from .llm_client import DeepSeekLLMClient, LLMClient, LLMClientError
     from .observability import configure_logging, get_request_id, log_workflow_event, set_request_id
@@ -50,6 +51,8 @@ if __package__:
         ReviewRequest,
         ReviewResponse,
         SafetyGate,
+        ValidateRequest,
+        ValidateResponse,
     )
     from .settings import load_app_settings
     from .traffic_guard import (
@@ -58,7 +61,7 @@ if __package__:
         TrafficGuardLease,
         TrafficGuardSettings,
     )
-    from .validation import build_default_engine
+    from .validation import ValidationContext, build_default_engine
 else:
     from agent_core import generate_control_plan, optimize_control_plan
     from auth import AuthPrincipal, AuthSettings, TokenVerifier
@@ -71,6 +74,7 @@ else:
         PlanReviewRequiredError,
         PlanVersionConflictError,
         SelfReviewDeniedError,
+        SkillExecutionError,
     )
     from llm_client import DeepSeekLLMClient, LLMClient, LLMClientError
     from observability import configure_logging, get_request_id, log_workflow_event, set_request_id
@@ -100,6 +104,8 @@ else:
         ReviewRequest,
         ReviewResponse,
         SafetyGate,
+        ValidateRequest,
+        ValidateResponse,
     )
     from settings import load_app_settings
     from traffic_guard import (
@@ -108,7 +114,7 @@ else:
         TrafficGuardLease,
         TrafficGuardSettings,
     )
-    from validation import build_default_engine
+    from validation import ValidationContext, build_default_engine
 
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -340,8 +346,46 @@ async def validation_error_handler(_: Request, __: RequestValidationError) -> JS
     )
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> dict[str, str | bool]:
+    return {
+        "status": "ok",
+        "version": app.version,
+        "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+        "model_configured": bool(os.getenv("DEEPSEEK_API_KEY", "").strip()),
+    }
+
+
+@app.post(
+    "/validate",
+    response_model=ValidateResponse,
+    responses={422: {"model": ErrorResponse}},
+)
+def validate_plan(request: ValidateRequest) -> ValidateResponse:
+    """Validate an existing control plan without calling the model."""
+    scenario = request.scenario_text or " ".join(
+        text
+        for text in (
+            request.control_object,
+            request.input_devices,
+            request.output_devices,
+            request.control_requirements,
+        )
+        if text
+    )
+    context = ValidationContext(
+        source="validate",
+        request_id=get_request_id(),
+        scenario_text=scenario,
+        plan_text=request.plan_text,
+        structured_io_available=False,
+        control_object=request.control_object,
+        input_devices=request.input_devices,
+        output_devices=request.output_devices,
+        control_requirements=request.control_requirements,
+        report_text=request.plan_text,
+    )
+    report = build_default_engine().validate(context)
+    return ValidateResponse(validation_report=report)
 
 
 @app.get(
@@ -722,6 +766,8 @@ def generate(
                 "created_at": plan.created_at,
             },
         )
+    except SkillExecutionError as exc:
+        raise APIServiceError("控制方案生成失败", str(exc)) from exc
     except AppError:
         raise
     except LLMClientError as exc:
@@ -832,6 +878,8 @@ def optimize(
                 "created_at": plan.created_at,
             },
         )
+    except SkillExecutionError as exc:
+        raise APIServiceError("控制方案优化失败", str(exc)) from exc
     except AppError:
         raise
     except LLMClientError as exc:
