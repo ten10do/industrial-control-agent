@@ -1,3 +1,24 @@
 [build]
 command = "npm run build"
 publish = "dist"
+
+[[redirects]]
+from = "/*"
+to = "/index.html"
+status = 200
+
+[[headers]]
+for = "/*"
+[headers.values]
+  Content-Security-Policy = "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https:; frame-src https:; form-action 'self'"
+  Cross-Origin-Opener-Policy = "same-origin-allow-popups"
+  Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+  Referrer-Policy = "no-referrer"
+  Strict-Transport-Security = "max-age=31536000; includeSubDomains"
+  X-Content-Type-Options = "nosniff"
+  X-Frame-Options = "DENY"
+
+[[headers]]
+for = "/assets/*"
+[headers.values]
+  Cache-Control = "public, max-age=31536000, immutable"

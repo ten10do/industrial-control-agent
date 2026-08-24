@@ -3,30 +3,35 @@ import logging
 import os
 import sys
 import time
-from contextlib import contextmanager
 from contextvars import ContextVar
+from contextlib import contextmanager
 from typing import Iterator
 
+
 request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
-_logger: logging.Logger | None = None
+logger = logging.getLogger("industrial_control_agent")
 
 
-def setup_logging(level: str | None = None) -> logging.Logger:
-    global _logger
-    if _logger is not None:
-        return _logger
-    _logger = logging.getLogger("industrial_control_agent")
-    _logger.setLevel((level or os.getenv("LOG_LEVEL", "INFO")).upper())
-    if not _logger.handlers:
+def configure_logging(level: int = logging.INFO) -> None:
+    logger.setLevel(level)
+    if not logger.handlers:
         handler = logging.StreamHandler(sys.stdout)
-        handler.setFormatter(
-            logging.Formatter(
-                '{"timestamp":"%(asctime)s","logger":"%(name)s","level":"%(levelname)s","message":%(message)s}',
-                datefmt="%Y-%m-%dT%H:%M:%S",
-            )
-        )
-        _logger.addHandler(handler)
-    return _logger
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        logger.addHandler(handler)
+    logger.propagate = False
+
+
+def setup_logging(level: str | int | None = None) -> logging.Logger:
+    """Backward-compatible logging setup used by scripts and deployments."""
+    resolved_level: int
+    if isinstance(level, int):
+        resolved_level = level
+    else:
+        level_name = (level or os.getenv("LOG_LEVEL", "INFO")).strip().upper()
+        candidate = logging.getLevelNamesMapping().get(level_name)
+        resolved_level = candidate if isinstance(candidate, int) else logging.INFO
+    configure_logging(resolved_level)
+    return logger
 
 
 def set_request_id(request_id: str) -> None:
@@ -35,11 +40,6 @@ def set_request_id(request_id: str) -> None:
 
 def get_request_id() -> str | None:
     return request_id_var.get()
-
-
-def _log_event(payload: dict) -> None:
-    logger = _logger or setup_logging()
-    logger.info(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
 
 
 def log_workflow_event(
@@ -52,7 +52,7 @@ def log_workflow_event(
     error_type: str | None = None,
     request_id: str | None = None,
 ) -> None:
-    _log_event({
+    payload = {
         "request_id": request_id or get_request_id(),
         "workflow_name": workflow_name,
         "step_name": step_name,
@@ -60,7 +60,8 @@ def log_workflow_event(
         "duration_ms": round(duration_ms, 2),
         "retry_count": retry_count,
         "error_type": error_type,
-    })
+    }
+    logger.info(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
 
 
 def log_validation_event(
@@ -73,7 +74,7 @@ def log_validation_event(
     error_type: str | None = None,
     request_id: str | None = None,
 ) -> None:
-    _log_event({
+    payload = {
         "request_id": request_id or get_request_id(),
         "rule_id": rule_id,
         "category": category,
@@ -81,7 +82,8 @@ def log_validation_event(
         "severity": severity,
         "duration_ms": round(duration_ms, 2),
         "error_type": error_type,
-    })
+    }
+    logger.info(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
 
 
 @contextmanager

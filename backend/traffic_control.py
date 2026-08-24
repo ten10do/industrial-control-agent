@@ -92,8 +92,9 @@ def jittered_backoff(base_seconds: float, attempt: int, max_jitter: float = 0.5)
     """Exponential backoff with uniform jitter."""
     raw = base_seconds * (2 ** attempt)
     return raw + random.uniform(0, max_jitter * raw)
+
+
 def reset_rate_limiter() -> None:
     """Reset rate limiter state. Intended for test fixtures only."""
     global _rate_limiter
     _rate_limiter = SlidingWindowRateLimiter(_DEFAULT_CONFIG.max_requests, _DEFAULT_CONFIG.window_seconds)
-

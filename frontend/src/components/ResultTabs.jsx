@@ -70,7 +70,7 @@ function IOTable({ rows }) {
 }
 
 
-function ResultTabs({ result }) {
+function ResultTabs({ result, exportAllowed = true, loadExport }) {
   const [activeTab, setActiveTab] = useState(TABS[0].key);
 
   useEffect(() => {
@@ -123,6 +123,9 @@ function ResultTabs({ result }) {
           <ReportPreview
             markdown={result.report_markdown}
             safetyNotice={result.safety_notice}
+            exportAllowed={exportAllowed}
+            loadExport={loadExport}
+            downloadName={`control-plan-${result.plan_id || "legacy"}.md`}
           />
         )}
         {activeTab !== "io_table" && activeTab !== "report_markdown" && (

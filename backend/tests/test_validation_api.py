@@ -30,12 +30,22 @@ GENERATE_RESPONSE_FIELDS = {
     "report_markdown",
     "safety_notice",
     "validation_report",
+    "safety_gate",
+    "plan_id",
+    "parent_plan_id",
+    "content_hash",
+    "created_at",
 }
 OPTIMIZE_RESPONSE_FIELDS = {
     "optimized_report",
     "change_summary",
     "safety_notice",
     "validation_report",
+    "safety_gate",
+    "plan_id",
+    "parent_plan_id",
+    "content_hash",
+    "created_at",
 }
 VALIDATION_REPORT_FIELDS = {
     "request_id",

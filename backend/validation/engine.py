@@ -220,4 +220,3 @@ class RuleEngine:
             rule_results=results,
 
         )
-

@@ -5,6 +5,7 @@ import pytest
 
 import backend.validation as validation_module
 import backend.validation.engine as validation_engine_module
+from backend.observability import logger
 from backend.validation import (
     RiskLevel,
     RuleEngine,
@@ -149,13 +150,20 @@ def test_report_summary_counts_and_risk_are_correct() -> None:
 
 def test_rule_execution_log_has_required_fields_without_plan_text(caplog) -> None:
     caplog.set_level(logging.INFO, logger="industrial_control_agent")
+    original_propagate = logger.propagate
+    logger.propagate = False
+    logger.addHandler(caplog.handler)
     context = validation_context(
         request_id="log-check-1",
         scenario_text="sensitive scenario body",
         plan_text="sensitive full plan body",
     )
 
-    RuleEngine([FixedRule("LOG_RULE", category="io", severity=Severity.MEDIUM)]).validate(context)
+    try:
+        RuleEngine([FixedRule("LOG_RULE", category="io", severity=Severity.MEDIUM)]).validate(context)
+    finally:
+        logger.removeHandler(caplog.handler)
+        logger.propagate = original_propagate
 
     payloads = [
         json.loads(record.message)

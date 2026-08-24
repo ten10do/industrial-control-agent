@@ -31,6 +31,46 @@ def test_health_and_cors(client: TestClient) -> None:
     assert response.headers["access-control-allow-origin"] == LOCAL_FRONTEND_ORIGIN
 
 
+def test_ready_reports_model_configuration_without_exposing_secrets(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+    response = client.get("/ready")
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "status": "not_ready",
+        "checks": {
+            "model_configuration": "error",
+            "traffic_guard": "ok",
+            "validation_engine": "ok",
+            "plan_storage": "ok",
+            "database_schema": "ok",
+            "audit_chain": "ok",
+            "audit_outbox": "ok",
+            "audit_delivery": "ok",
+            "model_job_queue": "ok",
+            "model_job_worker": "ok",
+            "identity_configuration": "ok",
+        },
+    }
+    assert "DEEPSEEK_API_KEY" not in response.text
+
+
+def test_ready_returns_ok_when_required_components_are_configured(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-placeholder")
+
+    response = client.get("/ready")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ready"
+
+
 def test_auto_generates_request_id(client: TestClient) -> None:
     response = client.get("/health")
 
@@ -84,6 +124,11 @@ def test_generate_contract(client: TestClient) -> None:
         "report_markdown",
         "safety_notice",
         "validation_report",
+        "safety_gate",
+        "plan_id",
+        "parent_plan_id",
+        "content_hash",
+        "created_at",
     }
     assert isinstance(payload["io_table"], list)
     assert set(payload["io_table"][0]) == {
@@ -114,6 +159,11 @@ def test_optimize_contract(client: TestClient) -> None:
         "change_summary",
         "safety_notice",
         "validation_report",
+        "safety_gate",
+        "plan_id",
+        "parent_plan_id",
+        "content_hash",
+        "created_at",
     }
     assert SAFETY_NOTICE_FRAGMENT in response.json()["safety_notice"]
     assert response.json()["validation_report"]["total_rules"] == 14
