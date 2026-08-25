@@ -52,7 +52,7 @@ else:
 
 
 ReviewDecision = Literal["approved", "rejected"]
-SCHEMA_REVISION = "20260728_02"
+SCHEMA_REVISION = "20260825_03"
 
 
 def content_hash(markdown: str) -> str:

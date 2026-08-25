@@ -1,10 +1,13 @@
 import threading
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, select
 
 import backend.main as main_module
 import backend.traffic_guard as traffic_guard_module
+from backend.database_schema import metadata, model_api_daily_usage
 from backend.errors import (
     APIAccessDeniedError,
     APICapacityExceededError,
@@ -15,6 +18,7 @@ from backend.errors import (
 from backend.llm_client import FakeLLMClient, LLMClientError
 from backend.main import app, get_model_api_guard
 from backend.traffic_guard import (
+    DatabaseModelAPITrafficGuard,
     ModelAPITrafficGuard,
     RedisModelAPITrafficGuard,
     TrafficGuardSettings,
@@ -56,6 +60,50 @@ def build_guard(
         ),
         clock=clock,
     )
+
+
+def test_database_guard_shares_atomic_daily_budget_across_instances() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    metadata.create_all(engine)
+    settings = TrafficGuardSettings(
+        max_concurrency=2,
+        global_requests=20,
+        client_requests=10,
+        daily_requests=2,
+    )
+    first_guard = DatabaseModelAPITrafficGuard(settings, engine)
+    second_guard = DatabaseModelAPITrafficGuard(settings, engine)
+
+    first_guard.acquire("client-1", None).release()
+    second_guard.acquire("client-2", None).release()
+
+    with pytest.raises(APIDailyBudgetExceededError):
+        first_guard.acquire("client-3", None)
+
+    with engine.connect() as connection:
+        request_count = connection.execute(
+            select(model_api_daily_usage.c.request_count),
+        ).scalar_one()
+    assert request_count == 2
+
+
+def test_database_guard_resets_budget_on_the_next_utc_day() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    metadata.create_all(engine)
+    current_time = [datetime(2026, 8, 25, 23, 59, tzinfo=UTC)]
+    guard = DatabaseModelAPITrafficGuard(
+        TrafficGuardSettings(daily_requests=1),
+        engine,
+        utcnow=lambda: current_time[0],
+    )
+
+    guard.acquire("client-1", None).release()
+    with pytest.raises(APIDailyBudgetExceededError) as exc_info:
+        guard.acquire("client-1", None)
+    assert exc_info.value.retry_after == 60
+
+    current_time[0] = datetime(2026, 8, 26, 0, 0, tzinfo=UTC)
+    guard.acquire("client-1", None).release()
 
 
 class CountingClientFactory:
