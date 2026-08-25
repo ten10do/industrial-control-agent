@@ -8,18 +8,17 @@ import backend.validation.engine as validation_engine_module
 from backend.llm_client import FakeLLMClient
 from backend.main import app, get_llm_client
 
-
 GENERATE_PAYLOAD = {
     "control_object": "Water tank and pump",
     "input_devices": "Start button, stop button, emergency stop, overload relay, run feedback",
     "output_devices": "Pump contactor and alarm lamp",
     "control_requirements": "Start and stop the pump with protection and status feedback.",
-    "model_provider": "DeepSeek",
+    "model_provider": "Ox Alpha",
 }
 OPTIMIZE_PAYLOAD = {
     "original_report": "# Original control plan\n\nUse level signals to control the pump.",
     "optimize_requirement": "Add deterministic protection and commissioning notes.",
-    "model_provider": "DeepSeek",
+    "model_provider": "Ox Alpha",
 }
 GENERATE_RESPONSE_FIELDS = {
     "requirement_analysis",
@@ -174,7 +173,7 @@ def test_validation_result_is_sanitized(client: TestClient) -> None:
     body = response.text
 
     assert response.status_code == 200
-    assert "DEEPSEEK_API_KEY" not in body
+    assert "OPENROUTER_API_KEY" not in body
     assert "Traceback" not in body
     assert "D:\\industrial-control-agent" not in body
     assert "/home/runner/work/" not in body
@@ -282,7 +281,7 @@ def test_critical_rule_findings_do_not_turn_generate_into_http_failure() -> None
                     "input_devices": "Start button",
                     "output_devices": "Motor contactor",
                     "control_requirements": "Run the motor.",
-                    "model_provider": "DeepSeek",
+                    "model_provider": "Ox Alpha",
                 },
             )
     finally:
@@ -318,7 +317,7 @@ def test_empty_io_table_returns_validation_report_instead_of_http_failure() -> N
                     "input_devices": "Start, stop and emergency stop buttons",
                     "output_devices": "Motor contactor",
                     "control_requirements": "Start and stop the motor safely.",
-                    "model_provider": "DeepSeek",
+                    "model_provider": "Ox Alpha",
                 },
             )
     finally:
@@ -356,7 +355,7 @@ def test_unparseable_io_row_is_reported_without_exposing_internal_error() -> Non
                     "input_devices": "Start, stop and emergency stop buttons",
                     "output_devices": "Motor contactor",
                     "control_requirements": "Start and stop the motor safely.",
-                    "model_provider": "DeepSeek",
+                    "model_provider": "Ox Alpha",
                 },
             )
     finally:

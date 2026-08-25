@@ -20,18 +20,17 @@ from backend.traffic_guard import (
     TrafficGuardSettings,
 )
 
-
 GENERATE_PAYLOAD = {
     "control_object": "Water tank",
     "input_devices": "Start button, stop button, level sensor",
     "output_devices": "Pump and alarm lamp",
     "control_requirements": "Start and stop the pump from the level signal.",
-    "model_provider": "DeepSeek",
+    "model_provider": "Ox Alpha",
 }
 OPTIMIZE_PAYLOAD = {
     "original_report": "# Original plan\n\nControl the pump from level signals.",
     "optimize_requirement": "Add safety notes.",
-    "model_provider": "DeepSeek",
+    "model_provider": "Ox Alpha",
 }
 
 
@@ -276,7 +275,7 @@ def test_access_rejection_does_not_construct_or_call_llm_client(
     llm_client = CountingFakeLLMClient()
     factory = CountingClientFactory(llm_client)
     app.dependency_overrides[get_model_api_guard] = lambda: guard
-    monkeypatch.setattr(main_module, "DeepSeekLLMClient", factory)
+    monkeypatch.setattr(main_module, "OpenRouterLLMClient", factory)
 
     with TestClient(app) as client:
         response = client.post(
@@ -321,7 +320,7 @@ def test_non_ascii_bearer_is_rejected_without_constructing_llm(
     llm_client = CountingFakeLLMClient()
     factory = CountingClientFactory(llm_client)
     app.dependency_overrides[get_model_api_guard] = lambda: guard
-    monkeypatch.setattr(main_module, "DeepSeekLLMClient", factory)
+    monkeypatch.setattr(main_module, "OpenRouterLLMClient", factory)
 
     with TestClient(app) as client:
         response = client.post(
@@ -347,7 +346,7 @@ def test_invalid_body_does_not_construct_llm_or_consume_quota(
     llm_client = CountingFakeLLMClient()
     factory = CountingClientFactory(llm_client)
     app.dependency_overrides[get_model_api_guard] = lambda: guard
-    monkeypatch.setattr(main_module, "DeepSeekLLMClient", factory)
+    monkeypatch.setattr(main_module, "OpenRouterLLMClient", factory)
 
     with TestClient(app) as client:
         invalid = client.post("/generate", json={"control_object": ""})
@@ -365,7 +364,7 @@ def test_generate_and_optimize_share_global_rate_limit(monkeypatch) -> None:
     llm_client = CountingFakeLLMClient()
     factory = CountingClientFactory(llm_client)
     app.dependency_overrides[get_model_api_guard] = lambda: guard
-    monkeypatch.setattr(main_module, "DeepSeekLLMClient", factory)
+    monkeypatch.setattr(main_module, "OpenRouterLLMClient", factory)
 
     with TestClient(app) as client:
         first = client.post("/generate", json=GENERATE_PAYLOAD)
@@ -411,7 +410,7 @@ def test_concurrency_rejection_does_not_call_llm_and_lease_is_released(
     llm_client = BlockingFakeLLMClient()
     factory = CountingClientFactory(llm_client)
     app.dependency_overrides[get_model_api_guard] = lambda: guard
-    monkeypatch.setattr(main_module, "DeepSeekLLMClient", factory)
+    monkeypatch.setattr(main_module, "OpenRouterLLMClient", factory)
     first_responses = []
 
     with TestClient(app) as client:
@@ -459,7 +458,7 @@ def test_workflow_failure_releases_capacity_for_next_request(monkeypatch) -> Non
     llm_client = FailOnceFakeLLMClient()
     factory = CountingClientFactory(llm_client)
     app.dependency_overrides[get_model_api_guard] = lambda: guard
-    monkeypatch.setattr(main_module, "DeepSeekLLMClient", factory)
+    monkeypatch.setattr(main_module, "OpenRouterLLMClient", factory)
 
     with TestClient(app) as client:
         failed = client.post("/generate", json=GENERATE_PAYLOAD)
@@ -490,7 +489,7 @@ def test_llm_factory_failure_releases_capacity_for_next_request(
 
     factory = FailOnceFactory()
     app.dependency_overrides[get_model_api_guard] = lambda: guard
-    monkeypatch.setattr(main_module, "DeepSeekLLMClient", factory)
+    monkeypatch.setattr(main_module, "OpenRouterLLMClient", factory)
 
     with TestClient(app) as client:
         failed = client.post("/generate", json=GENERATE_PAYLOAD)
@@ -522,7 +521,7 @@ def test_client_close_failure_does_not_replace_successful_response(
     llm_client = CloseTrackingFakeLLMClient()
     factory = CountingClientFactory(llm_client)
     app.dependency_overrides[get_model_api_guard] = lambda: guard
-    monkeypatch.setattr(main_module, "DeepSeekLLMClient", factory)
+    monkeypatch.setattr(main_module, "OpenRouterLLMClient", factory)
 
     with TestClient(app) as client:
         first = client.post("/generate", json=GENERATE_PAYLOAD)
@@ -561,7 +560,7 @@ def test_client_close_failure_does_not_replace_workflow_error(
     llm_client = TimeoutAndCloseFailingClient()
     factory = CountingClientFactory(llm_client)
     app.dependency_overrides[get_model_api_guard] = lambda: guard
-    monkeypatch.setattr(main_module, "DeepSeekLLMClient", factory)
+    monkeypatch.setattr(main_module, "OpenRouterLLMClient", factory)
 
     with TestClient(app) as client:
         response = client.post("/generate", json=GENERATE_PAYLOAD)
@@ -576,7 +575,7 @@ def test_health_and_examples_are_not_guarded(monkeypatch) -> None:
     guard = build_guard(access_token="test-access-token")
     factory = CountingClientFactory()
     app.dependency_overrides[get_model_api_guard] = lambda: guard
-    monkeypatch.setattr(main_module, "DeepSeekLLMClient", factory)
+    monkeypatch.setattr(main_module, "OpenRouterLLMClient", factory)
 
     with TestClient(app) as client:
         health = client.get("/health")

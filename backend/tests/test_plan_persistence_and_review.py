@@ -8,13 +8,12 @@ from backend.llm_client import FakeLLMClient
 from backend.main import app, get_llm_client
 from backend.plan_repository import PlanRepository
 
-
 GENERATE_PAYLOAD = {
     "control_object": "Motor",
     "input_devices": "Start, stop, emergency stop and overload inputs",
     "output_devices": "Motor contactor and alarm",
     "control_requirements": "Start and stop the motor with emergency protection.",
-    "model_provider": "DeepSeek",
+    "model_provider": "Ox Alpha",
 }
 
 
@@ -164,7 +163,7 @@ def test_optimization_creates_a_new_unapproved_version(client: TestClient) -> No
             "plan_id": generated["plan_id"],
             "original_report": generated["report_markdown"],
             "optimize_requirement": "Add a reset sequence.",
-            "model_provider": "DeepSeek",
+            "model_provider": "Ox Alpha",
         },
     )
 
@@ -184,7 +183,7 @@ def test_optimization_rejects_content_that_does_not_match_parent(client: TestCli
             "plan_id": generated["plan_id"],
             "original_report": "# Modified in the browser",
             "optimize_requirement": "Add a reset sequence.",
-            "model_provider": "DeepSeek",
+            "model_provider": "Ox Alpha",
         },
     )
 

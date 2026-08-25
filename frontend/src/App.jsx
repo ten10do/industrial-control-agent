@@ -46,7 +46,7 @@ function App() {
   const [formData, setFormData] = useState(EMPTY_FORM);
   const [examples, setExamples] = useState([]);
   const [selectedExampleName, setSelectedExampleName] = useState("");
-  const [modelProvider, setModelProvider] = useState("DeepSeek");
+  const [modelProvider, setModelProvider] = useState("Ox Alpha");
   const [backendStatus, setBackendStatus] = useState("checking");
   const [result, setResult] = useState(null);
   const [isLoading, setIsLoading] = useState(false);

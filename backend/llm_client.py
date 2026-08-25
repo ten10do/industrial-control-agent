@@ -74,14 +74,18 @@ DEFAULT_ATTEMPT_TIMEOUT_SECONDS = 60.0
 DEFAULT_TOTAL_TIMEOUT_SECONDS = 90.0
 DEFAULT_MAX_OUTPUT_TOKENS = 8192
 RETRY_JITTER_RATIO = 0.25
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+OPENROUTER_MODEL_ID = "stealth/ox-alpha"
+OPENROUTER_APP_URL = "https://industrial-control-agent.netlify.app"
+OPENROUTER_APP_TITLE = "Industrial Control Agent"
 
 
-class DeepSeekLLMClient:
+class OpenRouterLLMClient:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        base_url: str = "https://api.deepseek.com",
-        model: str = "deepseek-chat",
+        base_url: str = OPENROUTER_BASE_URL,
+        model: str = OPENROUTER_MODEL_ID,
         temperature: float = 0.2,
         timeout: float = DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
         total_timeout: float = DEFAULT_TOTAL_TIMEOUT_SECONDS,
@@ -95,7 +99,7 @@ class DeepSeekLLMClient:
         circuit_breaker: CircuitBreaker | None = None,
         client: Any | None = None,
     ) -> None:
-        resolved_key = api_key or os.getenv("DEEPSEEK_API_KEY")
+        resolved_key = api_key or os.getenv("OPENROUTER_API_KEY")
         if not resolved_key and client is None:
             raise LLMClientError("Model service is not configured")
 
@@ -114,6 +118,10 @@ class DeepSeekLLMClient:
         self.client = client or OpenAI(
             api_key=resolved_key,
             base_url=base_url,
+            default_headers={
+                "HTTP-Referer": OPENROUTER_APP_URL,
+                "X-OpenRouter-Title": OPENROUTER_APP_TITLE,
+            },
             timeout=timeout,
             max_retries=0,
         )

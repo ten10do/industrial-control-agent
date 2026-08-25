@@ -7,7 +7,7 @@ from openai import APIConnectionError, APIError, APITimeoutError, RateLimitError
 
 import backend.llm_client as llm_client_module
 from backend.errors import LLMResponseFormatError, LLMTimeoutError
-from backend.llm_client import DeepSeekLLMClient, LLMClientError
+from backend.llm_client import LLMClientError, OpenRouterLLMClient
 
 
 class _Message:
@@ -70,7 +70,7 @@ class _Clock:
 
 
 def _request() -> httpx.Request:
-    return httpx.Request("POST", "https://api.deepseek.com/chat/completions")
+    return httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
 
 
 def _rate_limit_error(retry_after: str, header: str = "Retry-After") -> RateLimitError:
@@ -92,16 +92,22 @@ def test_production_openai_client_disables_sdk_retries(monkeypatch) -> None:
 
     monkeypatch.setattr(llm_client_module, "OpenAI", build_client)
 
-    llm = DeepSeekLLMClient(api_key="placeholder")
+    llm = OpenRouterLLMClient(api_key="placeholder")
 
+    assert captured["base_url"] == "https://openrouter.ai/api/v1"
+    assert captured["default_headers"] == {
+        "HTTP-Referer": "https://industrial-control-agent.netlify.app",
+        "X-OpenRouter-Title": "Industrial Control Agent",
+    }
     assert captured["max_retries"] == 0
     assert captured["timeout"] == 60
+    assert llm.model == "stealth/ox-alpha"
     assert llm.total_timeout == 90
 
 
 def test_llm_timeout_reaches_max_retries_without_real_wait() -> None:
     client = _Client([APITimeoutError(_request()), APITimeoutError(_request()), APITimeoutError(_request())])
-    llm = DeepSeekLLMClient(client=client, max_retries=2, backoff_seconds=0, sleep_fn=lambda _: None)
+    llm = OpenRouterLLMClient(client=client, max_retries=2, backoff_seconds=0, sleep_fn=lambda _: None)
 
     with pytest.raises(LLMTimeoutError):
         llm.chat("prompt", request_id="timeout-1")
@@ -111,7 +117,7 @@ def test_llm_timeout_reaches_max_retries_without_real_wait() -> None:
 
 def test_transient_error_triggers_retry() -> None:
     client = _Client([APIConnectionError(request=_request()), '{"ok": true}'])
-    llm = DeepSeekLLMClient(client=client, max_retries=2, backoff_seconds=0, sleep_fn=lambda _: None)
+    llm = OpenRouterLLMClient(client=client, max_retries=2, backoff_seconds=0, sleep_fn=lambda _: None)
 
     assert llm.chat("prompt", request_id="retry-1") == '{"ok": true}'
     assert client.completions.calls == 2
@@ -136,7 +142,7 @@ def test_total_deadline_caps_attempt_timeout_and_stops_extra_calls() -> None:
     client = _Client([])
     client.completions = completions
     client.chat = _Chat(completions)
-    llm = DeepSeekLLMClient(
+    llm = OpenRouterLLMClient(
         client=client,
         timeout=60,
         total_timeout=90,
@@ -170,7 +176,7 @@ def test_successful_response_after_total_deadline_is_rejected() -> None:
     client = _Client([])
     client.completions = completions
     client.chat = _Chat(completions)
-    llm = DeepSeekLLMClient(
+    llm = OpenRouterLLMClient(
         client=client,
         total_timeout=90,
         clock_fn=clock,
@@ -206,7 +212,7 @@ def test_error_after_total_deadline_is_reported_as_timeout(error_kind: str) -> N
     client = _Client([])
     client.completions = completions
     client.chat = _Chat(completions)
-    llm = DeepSeekLLMClient(
+    llm = OpenRouterLLMClient(
         client=client,
         total_timeout=90,
         max_retries=0,
@@ -222,7 +228,7 @@ def test_error_after_total_deadline_is_reported_as_timeout(error_kind: str) -> N
 def test_rate_limit_retry_honors_retry_after() -> None:
     clock = _Clock()
     client = _Client([_rate_limit_error("7"), '{"ok": true}'])
-    llm = DeepSeekLLMClient(
+    llm = OpenRouterLLMClient(
         client=client,
         max_retries=1,
         backoff_seconds=0.25,
@@ -244,7 +250,7 @@ def test_rate_limit_retry_honors_http_date_retry_after() -> None:
         usegmt=True,
     )
     client = _Client([_rate_limit_error(retry_at), '{"ok": true}'])
-    llm = DeepSeekLLMClient(
+    llm = OpenRouterLLMClient(
         client=client,
         max_retries=1,
         sleep_fn=clock.sleep,
@@ -262,7 +268,7 @@ def test_rate_limit_retry_honors_retry_after_milliseconds() -> None:
     client = _Client(
         [_rate_limit_error("1500", header="retry-after-ms"), '{"ok": true}'],
     )
-    llm = DeepSeekLLMClient(
+    llm = OpenRouterLLMClient(
         client=client,
         max_retries=1,
         sleep_fn=clock.sleep,
@@ -278,7 +284,7 @@ def test_rate_limit_retry_honors_retry_after_milliseconds() -> None:
 def test_invalid_retry_after_uses_exponential_backoff(retry_after: str) -> None:
     clock = _Clock()
     client = _Client([_rate_limit_error(retry_after), '{"ok": true}'])
-    llm = DeepSeekLLMClient(
+    llm = OpenRouterLLMClient(
         client=client,
         max_retries=1,
         backoff_seconds=0.25,
@@ -294,7 +300,7 @@ def test_invalid_retry_after_uses_exponential_backoff(retry_after: str) -> None:
 def test_retry_after_beyond_deadline_stops_without_waiting_or_retrying() -> None:
     clock = _Clock()
     client = _Client([_rate_limit_error("120"), '{"ok": true}'])
-    llm = DeepSeekLLMClient(
+    llm = OpenRouterLLMClient(
         client=client,
         total_timeout=90,
         max_retries=1,
@@ -315,7 +321,7 @@ def test_sdk_retryable_api_statuses_remain_retryable(status_code: int) -> None:
     error = APIError("retryable", _request(), body=None)
     error.status_code = status_code
     client = _Client([error, '{"ok": true}'])
-    llm = DeepSeekLLMClient(
+    llm = OpenRouterLLMClient(
         client=client,
         max_retries=1,
         backoff_seconds=0,
@@ -330,7 +336,7 @@ def test_non_transient_error_does_not_retry() -> None:
     error = APIError("bad request", _request(), body=None)
     error.status_code = 400
     client = _Client([error, '{"ok": true}'])
-    llm = DeepSeekLLMClient(client=client, max_retries=2, backoff_seconds=0, sleep_fn=lambda _: None)
+    llm = OpenRouterLLMClient(client=client, max_retries=2, backoff_seconds=0, sleep_fn=lambda _: None)
 
     with pytest.raises(LLMClientError):
         llm.chat("prompt", request_id="non-transient-1")
@@ -340,7 +346,7 @@ def test_non_transient_error_does_not_retry() -> None:
 
 def test_empty_llm_content_is_format_error() -> None:
     client = _Client([""])
-    llm = DeepSeekLLMClient(client=client, max_retries=2, backoff_seconds=0, sleep_fn=lambda _: None)
+    llm = OpenRouterLLMClient(client=client, max_retries=2, backoff_seconds=0, sleep_fn=lambda _: None)
 
     with pytest.raises(LLMResponseFormatError):
         llm.chat("prompt", request_id="empty-1")
@@ -348,7 +354,7 @@ def test_empty_llm_content_is_format_error() -> None:
 
 def test_llm_client_closes_underlying_http_client() -> None:
     client = _Client(['{"ok": true}'])
-    llm = DeepSeekLLMClient(client=client)
+    llm = OpenRouterLLMClient(client=client)
 
     llm.close()
 
