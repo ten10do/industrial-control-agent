@@ -123,6 +123,7 @@ def test_ox_alpha_request_bounds_output_and_reasoning() -> None:
     assert captured["max_tokens"] == 8192
     assert captured["extra_body"] == {
         "reasoning": {"effort": "low", "exclude": True},
+        "plugins": [{"id": "response-healing"}],
     }
 
 
