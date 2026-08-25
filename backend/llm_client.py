@@ -5,8 +5,10 @@ import random
 import threading
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from datetime import timezone
 from email.utils import parsedate_to_datetime
+from queue import Empty, Queue
 from typing import Any, Optional, Protocol
 
 from openai import (
@@ -72,7 +74,7 @@ class CircuitBreaker:
 
 DEFAULT_ATTEMPT_TIMEOUT_SECONDS = 60.0
 DEFAULT_TOTAL_TIMEOUT_SECONDS = 90.0
-DEFAULT_MAX_OUTPUT_TOKENS = 8192
+DEFAULT_MAX_OUTPUT_TOKENS = 4096
 RETRY_JITTER_RATIO = 0.25
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_MODEL_ID = "stealth/ox-alpha"
@@ -90,6 +92,7 @@ class OpenRouterLLMClient:
         timeout: float = DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
         total_timeout: float = DEFAULT_TOTAL_TIMEOUT_SECONDS,
         max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
+        reasoning_effort: str = "low",
         max_retries: int = 2,
         backoff_seconds: float = 0.25,
         sleep_fn: Callable[[float], None] = time.sleep,
@@ -108,6 +111,7 @@ class OpenRouterLLMClient:
         self.timeout = timeout
         self.total_timeout = total_timeout
         self.max_output_tokens = max_output_tokens
+        self.reasoning_effort = reasoning_effort
         self.max_retries = max_retries
         self.backoff_seconds = backoff_seconds
         self.sleep_fn = sleep_fn
@@ -140,14 +144,11 @@ class OpenRouterLLMClient:
                 raise LLMClientError("Model service is temporarily unavailable")
             attempt_timeout = self._attempt_timeout(deadline)
             try:
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    temperature=self.temperature,
-                    max_tokens=self.max_output_tokens,
-                    response_format={"type": "json_object"},
-                    timeout=attempt_timeout,
-                )
+                response = self._create_completion(messages, attempt_timeout)
+            except LLMTimeoutError:
+                self.circuit_breaker.record_failure()
+                self._log_retry("error", retry_count, "DeadlineExceeded", request_id)
+                raise
             except AuthenticationError as exc:
                 self.circuit_breaker.record_failure()
                 self._raise_if_deadline_exceeded(deadline, retry_count, request_id)
@@ -200,6 +201,40 @@ class OpenRouterLLMClient:
             raise LLMResponseFormatError()
         self.circuit_breaker.record_success()
         return content
+
+    def _create_completion(
+        self,
+        messages: list[dict[str, str]],
+        attempt_timeout: float,
+    ) -> Any:
+        result_queue: Queue[tuple[bool, Any]] = Queue(maxsize=1)
+
+        def invoke() -> None:
+            try:
+                result = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    temperature=self.temperature,
+                    max_tokens=self.max_output_tokens,
+                    reasoning_effort=self.reasoning_effort,
+                    response_format={"type": "json_object"},
+                    timeout=attempt_timeout,
+                )
+            except Exception as exc:
+                result_queue.put((False, exc))
+            else:
+                result_queue.put((True, result))
+
+        threading.Thread(target=invoke, daemon=True).start()
+        try:
+            succeeded, result = result_queue.get(timeout=attempt_timeout)
+        except Empty as exc:
+            with suppress(Exception):
+                self.close()
+            raise LLMTimeoutError() from exc
+        if succeeded:
+            return result
+        raise result
 
     def _log_retry(self, status: str, retry_count: int, error_type: str, request_id: Optional[str]) -> None:
         log_workflow_event(
