@@ -68,15 +68,23 @@ def _parse_json_object(raw_content: str) -> dict[str, Any]:
         if first_newline != -1 and last_fence > first_newline:
             content = content[first_newline + 1 : last_fence].strip()
 
-    start = content.find("{")
-    end = content.rfind("}")
-    if start == -1 or end <= start:
-        raise LLMResponseFormatError()
-
     try:
-        payload = json.loads(content[start : end + 1])
-    except json.JSONDecodeError as exc:
-        raise LLMResponseFormatError() from exc
+        payload = json.loads(content)
+    except json.JSONDecodeError:
+        decoder = json.JSONDecoder()
+        candidates: list[tuple[int, int, dict[str, Any]]] = []
+        for start, character in enumerate(content):
+            if character != "{":
+                continue
+            try:
+                candidate, length = decoder.raw_decode(content[start:])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(candidate, dict):
+                candidates.append((start, start + length, candidate))
+        if not candidates:
+            raise LLMResponseFormatError()
+        _, _, payload = max(candidates, key=lambda item: (item[1], -item[0]))
 
     if not isinstance(payload, dict):
         raise LLMResponseFormatError()

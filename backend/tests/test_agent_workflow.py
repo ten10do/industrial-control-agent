@@ -265,3 +265,14 @@ def test_parse_json_fallback_bracket_extraction() -> None:
 
     payload = _parse_json_object('some text {"key": "value"} more text')
     assert payload["key"] == "value"
+
+
+def test_parse_json_uses_final_complete_object_after_reasoning() -> None:
+    from backend.agent_core import _parse_json_object
+
+    payload = _parse_json_object(
+        'analysis {"draft": true}\nfinal: '
+        '{"key": "value", "nested": {"enabled": true}} trailing text',
+    )
+
+    assert payload == {"key": "value", "nested": {"enabled": True}}
