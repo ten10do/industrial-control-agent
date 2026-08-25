@@ -1,3 +1,5 @@
+import threading
+import time
 from datetime import datetime, timezone
 from email.utils import format_datetime
 
@@ -103,6 +105,56 @@ def test_production_openai_client_disables_sdk_retries(monkeypatch) -> None:
     assert captured["timeout"] == 60
     assert llm.model == "stealth/ox-alpha"
     assert llm.total_timeout == 90
+
+
+def test_ox_alpha_request_bounds_output_and_reasoning() -> None:
+    captured: dict[str, object] = {}
+
+    class _CapturingCompletions:
+        def create(self, **kwargs: object) -> _Response:
+            captured.update(kwargs)
+            return _Response('{"ok": true}')
+
+    client = _Client([])
+    client.chat = _Chat(_CapturingCompletions())
+    llm = OpenRouterLLMClient(client=client)
+
+    assert llm.chat("prompt") == '{"ok": true}'
+    assert captured["max_tokens"] == 4096
+    assert captured["reasoning_effort"] == "low"
+
+
+def test_hard_attempt_timeout_closes_a_trickling_client() -> None:
+    release = threading.Event()
+
+    class _BlockingCompletions:
+        def create(self, **_: object) -> _Response:
+            release.wait(timeout=1)
+            return _Response('{"ok": true}')
+
+    class _BlockingClient(_Client):
+        def __init__(self) -> None:
+            super().__init__([])
+            self.chat = _Chat(_BlockingCompletions())
+
+        def close(self) -> None:
+            super().close()
+            release.set()
+
+    client = _BlockingClient()
+    llm = OpenRouterLLMClient(
+        client=client,
+        timeout=0.02,
+        total_timeout=0.02,
+        max_retries=0,
+    )
+    started = time.monotonic()
+
+    with pytest.raises(LLMTimeoutError):
+        llm.chat("prompt", request_id="hard-timeout-1")
+
+    assert time.monotonic() - started < 0.5
+    assert client.closed is True
 
 
 def test_llm_timeout_reaches_max_retries_without_real_wait() -> None:
