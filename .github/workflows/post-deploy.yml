@@ -1,4 +1,4 @@
-name: Post-Deploy Verification
+name: Production Deployment
 
 on:
   workflow_run:
@@ -14,7 +14,7 @@ permissions:
 
 concurrency:
   group: post-deploy-main
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   smoke:
@@ -26,6 +26,16 @@ jobs:
       TARGET_COMMIT: ${{ github.event.workflow_run.head_sha }}
 
     steps:
+      - name: Trigger the tested Render revision
+        env:
+          DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          test -n "$DEPLOY_HOOK_URL"
+          curl --fail --silent --show-error --get \
+            --data-urlencode "ref=$TARGET_COMMIT" \
+            "$DEPLOY_HOOK_URL" > /dev/null
+          echo "Render deployment triggered for $TARGET_COMMIT"
+
       - name: Verify deployed backend revision and readiness
         run: |
           for i in $(seq 1 75); do
