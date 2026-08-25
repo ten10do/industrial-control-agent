@@ -204,7 +204,7 @@ class ModelJobRunner:
         if isinstance(exc, LLMClientError):
             return True, retry_after
         if isinstance(exc, AppError):
-            return exc.status_code in {429, 503, 504}, retry_after
+            return exc.status_code in {429, 502, 503, 504}, retry_after
         return False, retry_after
 
 

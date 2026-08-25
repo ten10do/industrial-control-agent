@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import update
 
 from backend.database_schema import model_jobs
+from backend.errors import LLMResponseFormatError
 from backend.errors import ModelJobQueueFullError
 from backend.llm_client import FakeLLMClient
 from backend.main import app
@@ -32,6 +33,10 @@ def _enqueue(repository: PlanRepository):
         request_hash=request_fingerprint(GENERATE_PAYLOAD),
         max_attempts=3,
     )
+
+
+def test_model_response_format_error_is_retryable() -> None:
+    assert ModelJobRunner._retry_policy(LLMResponseFormatError()) == (True, 2)
 
 
 def test_async_api_enqueues_idempotently_without_running_model() -> None:
