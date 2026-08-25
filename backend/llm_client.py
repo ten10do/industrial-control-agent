@@ -223,6 +223,7 @@ class OpenRouterLLMClient:
                             "effort": self.reasoning_effort,
                             "exclude": True,
                         },
+                        "plugins": [{"id": "response-healing"}],
                     },
                 )
             except Exception as exc:
