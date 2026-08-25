@@ -196,3 +196,15 @@ Index(
     model_jobs.c.request_hash,
     model_jobs.c.status,
 )
+
+model_api_daily_usage = Table(
+    "model_api_daily_usage",
+    metadata,
+    Column("bucket_date", String(10), primary_key=True),
+    Column("request_count", Integer, nullable=False),
+    Column("updated_at", String(40), nullable=False),
+    CheckConstraint(
+        "request_count >= 0",
+        name="ck_model_api_daily_usage_nonnegative",
+    ),
+)

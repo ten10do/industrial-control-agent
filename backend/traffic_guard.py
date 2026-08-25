@@ -6,9 +6,13 @@ import threading
 import time
 from collections import OrderedDict, deque
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy.engine import Engine
 
 if __package__:
+    from .database_schema import model_api_daily_usage
     from .errors import (
         APIAccessDeniedError,
         APICapacityExceededError,
@@ -16,6 +20,7 @@ if __package__:
         APIRateLimitExceededError,
     )
 else:
+    from database_schema import model_api_daily_usage
     from errors import (
         APIAccessDeniedError,
         APICapacityExceededError,
@@ -257,6 +262,91 @@ class ModelAPITrafficGuard:
         with self._lock:
             if self._active_requests > 0:
                 self._active_requests -= 1
+
+
+class DatabaseModelAPITrafficGuard:
+    """Local burst protection with a shared, atomic daily database budget."""
+
+    def __init__(
+        self,
+        settings: TrafficGuardSettings,
+        engine: Engine,
+        *,
+        utcnow: Callable[[], datetime] | None = None,
+    ) -> None:
+        self.settings = settings
+        self._engine = engine
+        self._utcnow = utcnow or (lambda: datetime.now(UTC))
+        self._local_guard = ModelAPITrafficGuard(
+            replace(settings, daily_requests=2_147_483_647),
+        )
+
+    @property
+    def active_requests(self) -> int:
+        return self._local_guard.active_requests
+
+    def ping(self) -> None:
+        with self._engine.connect() as connection:
+            connection.exec_driver_sql("SELECT 1").scalar_one()
+
+    def acquire(
+        self,
+        client_id: str,
+        access_token: str | None,
+    ) -> TrafficGuardLease:
+        local_lease = self._local_guard.acquire(client_id, access_token)
+        try:
+            self._consume_daily_request()
+        except Exception:
+            local_lease.release()
+            raise
+        return local_lease
+
+    def _consume_daily_request(self) -> None:
+        now = self._utcnow()
+        if now.tzinfo is None:
+            raise ValueError("The database quota clock must be timezone-aware")
+        now = now.astimezone(UTC)
+        bucket_date = now.date().isoformat()
+        values = {
+            "bucket_date": bucket_date,
+            "request_count": 1,
+            "updated_at": now.isoformat(),
+        }
+        if self._engine.dialect.name == "postgresql":
+            from sqlalchemy.dialects.postgresql import insert
+        elif self._engine.dialect.name == "sqlite":
+            from sqlalchemy.dialects.sqlite import insert
+        else:
+            raise RuntimeError("Database model quota requires PostgreSQL or SQLite")
+
+        statement = (
+            insert(model_api_daily_usage)
+            .values(**values)
+            .on_conflict_do_update(
+                index_elements=[model_api_daily_usage.c.bucket_date],
+                set_={
+                    "request_count": model_api_daily_usage.c.request_count + 1,
+                    "updated_at": values["updated_at"],
+                },
+                where=(
+                    model_api_daily_usage.c.request_count
+                    < self.settings.daily_requests
+                ),
+            )
+            .returning(model_api_daily_usage.c.request_count)
+        )
+        with self._engine.begin() as connection:
+            request_count = connection.execute(statement).scalar_one_or_none()
+        if request_count is None:
+            tomorrow = datetime.combine(
+                now.date() + timedelta(days=1),
+                datetime.min.time(),
+                tzinfo=UTC,
+            )
+            raise APIDailyBudgetExceededError(
+                max(1, math.ceil((tomorrow - now).total_seconds())),
+            )
 
 
 REDIS_ACQUIRE_SCRIPT = """

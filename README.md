@@ -210,7 +210,7 @@ SQLite 仅用于本地开发和自动化测试。生产 PostgreSQL 使用连接�
 - 认证、限流或容量检查拒绝的请求不会创建或调用模型客户端。
 - `/health`、`/ready`、`/examples` 和 CORS 预检保持公开，不占用模型请求额度。
 
-未配置 `MODEL_API_REDIS_URL` 时限制器针对单个 ASGI 进程。配置 Redis 后，分钟总额度、客户端额度、每日预算和并发租约通过原子脚本在多 Worker/多实例之间共享；Redis 配置存在但连接失败时应用拒绝启动，避免静默退回非全局保护。
+未配置 `MODEL_API_REDIS_URL` 时，分钟额度与并发限制针对单个进程，每日模型预算则通过应用数据库原子计数，在 API 与任务 Worker 之间共享。配置 Redis 后，分钟总额度、客户端额度、每日预算和并发租约全部通过原子脚本在多 Worker/多实例之间共享；Redis 配置存在但连接失败时应用拒绝启动，避免静默回退。
 
 客户端额度使用 ASGI 服务器在可信代理配置下解析得到的 `request.client.host`，业务代码不会直接信任任意 `X-Forwarded-For`。部署到新的反向代理平台时，应先确认其可信代理配置；即使客户端地址无法区分，单进程总额度和并发上限仍会继续生效。
 
@@ -346,7 +346,7 @@ http://localhost:5173
 - `MODEL_API_RATE_WINDOW_SECONDS`：限流时间窗口秒数，默认 `60`。
 - `MODEL_API_AUTH_REQUIRED`：是否要求模型接口携带 Bearer Token，默认 `false`。
 - `MODEL_API_ACCESS_TOKEN`：私有模式使用的服务端访问令牌；仅在可信服务端环境配置。
-- `MODEL_API_REDIS_URL`：可选 Redis 连接地址；配置后启用跨进程、跨实例的全局保护。
+- `MODEL_API_REDIS_URL`：可选 Redis 连接地址；未配置时每日预算由数据库全局控制，配置后所有流量限制均跨进程、跨实例共享。
 - `MODEL_API_REDIS_KEY_PREFIX`：Redis 键前缀，默认 `industrial-control-agent`。
 - `PLAN_STORAGE_PATH`：仅本地 SQLite 使用的路径，默认 `backend/data/plans.db`。
 

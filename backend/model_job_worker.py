@@ -16,6 +16,7 @@ if __package__:
     from .schemas import GenerateRequest, OptimizeRequest, SafetyGate
     from .settings import AppSettings, load_app_settings
     from .traffic_guard import (
+        DatabaseModelAPITrafficGuard,
         ModelAPITrafficGuard,
         RedisModelAPITrafficGuard,
         TrafficGuardSettings,
@@ -29,6 +30,7 @@ else:
     from schemas import GenerateRequest, OptimizeRequest, SafetyGate
     from settings import AppSettings, load_app_settings
     from traffic_guard import (
+        DatabaseModelAPITrafficGuard,
         ModelAPITrafficGuard,
         RedisModelAPITrafficGuard,
         TrafficGuardSettings,
@@ -47,7 +49,11 @@ class ModelJobRunner:
         self,
         repository: PlanRepository,
         settings: AppSettings,
-        guard: ModelAPITrafficGuard | RedisModelAPITrafficGuard,
+        guard: (
+            DatabaseModelAPITrafficGuard
+            | ModelAPITrafficGuard
+            | RedisModelAPITrafficGuard
+        ),
         *,
         client_provider: Callable[[], LLMClient] = OpenRouterLLMClient,
         worker_id: str | None = None,
@@ -207,14 +213,20 @@ class ModelJobRunner:
         return False, retry_after
 
 
-def build_guard() -> ModelAPITrafficGuard | RedisModelAPITrafficGuard:
+def build_guard(
+    repository: PlanRepository,
+) -> (
+    DatabaseModelAPITrafficGuard
+    | ModelAPITrafficGuard
+    | RedisModelAPITrafficGuard
+):
     guard_settings = TrafficGuardSettings.from_env()
     guard = (
         RedisModelAPITrafficGuard(guard_settings)
         if guard_settings.redis_url
-        else ModelAPITrafficGuard(guard_settings)
+        else DatabaseModelAPITrafficGuard(guard_settings, repository.engine)
     )
-    if isinstance(guard, RedisModelAPITrafficGuard):
+    if isinstance(guard, (DatabaseModelAPITrafficGuard, RedisModelAPITrafficGuard)):
         guard.ping()
     return guard
 
@@ -222,7 +234,7 @@ def build_guard() -> ModelAPITrafficGuard | RedisModelAPITrafficGuard:
 def main() -> None:
     settings = load_app_settings()
     repository = build_repository(settings)
-    guard = build_guard()
+    guard = build_guard(repository)
     runner = ModelJobRunner(repository, settings, guard)
     running = True
 

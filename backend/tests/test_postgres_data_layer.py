@@ -3,7 +3,9 @@ import uuid
 
 import pytest
 
+from backend.errors import APIDailyBudgetExceededError
 from backend.plan_repository import PlanRepository, request_fingerprint
+from backend.traffic_guard import DatabaseModelAPITrafficGuard, TrafficGuardSettings
 
 POSTGRES_URL = os.getenv("TEST_POSTGRES_URL", "")
 
@@ -17,6 +19,18 @@ def test_postgres_transaction_and_outbox_smoke() -> None:
         audit_active_key_id="ci",
     )
     repository.verify_schema_version()
+    quota_settings = TrafficGuardSettings(
+        global_requests=20,
+        client_requests=10,
+        daily_requests=2,
+    )
+    first_guard = DatabaseModelAPITrafficGuard(quota_settings, repository.engine)
+    second_guard = DatabaseModelAPITrafficGuard(quota_settings, repository.engine)
+    first_guard.acquire("postgres-client-1", None).release()
+    second_guard.acquire("postgres-client-2", None).release()
+    with pytest.raises(APIDailyBudgetExceededError):
+        first_guard.acquire("postgres-client-3", None)
+
     suffix = uuid.uuid4().hex
     plan = repository.create_plan(
         source="generate",

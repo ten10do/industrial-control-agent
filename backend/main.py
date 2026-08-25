@@ -61,6 +61,7 @@ if __package__:
     )
     from .settings import load_app_settings
     from .traffic_guard import (
+        DatabaseModelAPITrafficGuard,
         ModelAPITrafficGuard,
         RedisModelAPITrafficGuard,
         TrafficGuardLease,
@@ -119,6 +120,7 @@ else:
     )
     from settings import load_app_settings
     from traffic_guard import (
+        DatabaseModelAPITrafficGuard,
         ModelAPITrafficGuard,
         RedisModelAPITrafficGuard,
         TrafficGuardLease,
@@ -171,9 +173,12 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     guard = (
         RedisModelAPITrafficGuard(guard_settings)
         if guard_settings.redis_url
-        else ModelAPITrafficGuard(guard_settings)
+        else DatabaseModelAPITrafficGuard(
+            guard_settings,
+            plan_repository.engine,
+        )
     )
-    if isinstance(guard, RedisModelAPITrafficGuard):
+    if isinstance(guard, (DatabaseModelAPITrafficGuard, RedisModelAPITrafficGuard)):
         guard.ping()
     application.state.model_api_guard = guard
     application.state.plan_repository = plan_repository
@@ -189,7 +194,11 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
 def get_model_api_guard(
     request: Request,
-) -> ModelAPITrafficGuard | RedisModelAPITrafficGuard:
+) -> (
+    DatabaseModelAPITrafficGuard
+    | ModelAPITrafficGuard
+    | RedisModelAPITrafficGuard
+):
     return request.app.state.model_api_guard
 
 

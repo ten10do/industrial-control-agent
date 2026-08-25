@@ -214,6 +214,7 @@ def test_alembic_upgrade_produces_expected_schema(
         "idempotency_records",
         "service_heartbeats",
         "model_jobs",
+        "model_api_daily_usage",
         "alembic_version",
     }.issubset(tables)
 
