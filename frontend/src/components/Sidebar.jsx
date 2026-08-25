@@ -100,7 +100,7 @@ function Sidebar({
           value={modelProvider}
           onChange={(event) => onModelProviderChange(event.target.value)}
         >
-          <option value="DeepSeek">DeepSeek</option>
+          <option value="Ox Alpha">OpenRouter · Ox Alpha</option>
         </select>
       </section>
 

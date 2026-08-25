@@ -93,7 +93,7 @@ describe("App response compatibility", () => {
     expect(optimizeControlPlan).toHaveBeenCalledWith({
       original_report: "# 旧响应报告",
       optimize_requirement: "增加急停复位逻辑",
-      model_provider: "DeepSeek",
+      model_provider: "Ox Alpha",
     }, expect.objectContaining({ onStatus: expect.any(Function) }));
   });
 

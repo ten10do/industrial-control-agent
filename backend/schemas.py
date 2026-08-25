@@ -17,7 +17,7 @@ class GenerateRequest(RequestModel):
     input_devices: str = Field(min_length=1, max_length=6000)
     output_devices: str = Field(min_length=1, max_length=6000)
     control_requirements: str = Field(min_length=1, max_length=10000)
-    model_provider: str = Field(default="DeepSeek", min_length=1, max_length=50)
+    model_provider: Literal["Ox Alpha"] = "Ox Alpha"
 
 
 class IOPoint(BaseModel):
@@ -56,7 +56,7 @@ class GenerateResponse(BaseModel):
 class OptimizeRequest(RequestModel):
     original_report: str = Field(min_length=1, max_length=50000)
     optimize_requirement: str = Field(min_length=1, max_length=10000)
-    model_provider: str = Field(default="DeepSeek", min_length=1, max_length=50)
+    model_provider: Literal["Ox Alpha"] = "Ox Alpha"
     plan_id: Optional[str] = Field(default=None, min_length=1, max_length=100)
 
 

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 if __package__:
     from .agent_core import generate_control_plan, optimize_control_plan
     from .errors import AppError
-    from .llm_client import DeepSeekLLMClient, LLMClient, LLMClientError
+    from .llm_client import LLMClient, LLMClientError, OpenRouterLLMClient
     from .outbox_worker import build_repository
     from .plan_repository import ModelJobRecord, PlanRepository
     from .schemas import GenerateRequest, OptimizeRequest, SafetyGate
@@ -22,7 +22,7 @@ if __package__:
 else:
     from agent_core import generate_control_plan, optimize_control_plan
     from errors import AppError
-    from llm_client import DeepSeekLLMClient, LLMClient, LLMClientError
+    from llm_client import LLMClient, LLMClientError, OpenRouterLLMClient
     from outbox_worker import build_repository
     from plan_repository import ModelJobRecord, PlanRepository
     from schemas import GenerateRequest, OptimizeRequest, SafetyGate
@@ -48,7 +48,7 @@ class ModelJobRunner:
         settings: AppSettings,
         guard: ModelAPITrafficGuard | RedisModelAPITrafficGuard,
         *,
-        client_provider: Callable[[], LLMClient] = DeepSeekLLMClient,
+        client_provider: Callable[[], LLMClient] = OpenRouterLLMClient,
         worker_id: str | None = None,
     ) -> None:
         self.repository = repository

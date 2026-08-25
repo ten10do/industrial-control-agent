@@ -12,7 +12,6 @@ from backend.llm_client import FakeLLMClient
 from backend.main import app, get_llm_client, get_token_verifier
 from backend.plan_repository import PlanRepository
 
-
 SECRET = "test-auth-secret-that-is-longer-than-thirty-two-bytes"
 ISSUER = "https://identity.example.com/"
 AUDIENCE = "industrial-control-agent"
@@ -21,7 +20,7 @@ GENERATE_PAYLOAD = {
     "input_devices": "Start, stop, emergency stop and overload inputs",
     "output_devices": "Motor contactor and alarm",
     "control_requirements": "Start and stop the motor with emergency protection.",
-    "model_provider": "DeepSeek",
+    "model_provider": "Ox Alpha",
 }
 
 

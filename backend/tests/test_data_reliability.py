@@ -6,7 +6,6 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
-
 from sqlalchemy.exc import IntegrityError
 
 from backend.errors import PlanConcurrentUpdateError
@@ -16,13 +15,12 @@ from backend.migrate_sqlite_to_postgres import migrate
 from backend.outbox_worker import AuditOutboxDispatcher
 from backend.plan_repository import PlanRepository
 
-
 GENERATE_PAYLOAD = {
     "control_object": "Motor",
     "input_devices": "Start, stop, emergency stop and overload inputs",
     "output_devices": "Motor contactor and alarm",
     "control_requirements": "Start and stop the motor with emergency protection.",
-    "model_provider": "DeepSeek",
+    "model_provider": "Ox Alpha",
 }
 
 

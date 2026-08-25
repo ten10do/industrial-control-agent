@@ -23,7 +23,12 @@ if __package__:
         SelfReviewDeniedError,
         SkillExecutionError,
     )
-    from .llm_client import DeepSeekLLMClient, LLMClient, LLMClientError
+    from .llm_client import (
+        OPENROUTER_MODEL_ID,
+        LLMClient,
+        LLMClientError,
+        OpenRouterLLMClient,
+    )
     from .observability import configure_logging, get_request_id, log_workflow_event, set_request_id
     from .plan_repository import (
         AuditRecord,
@@ -76,7 +81,12 @@ else:
         SelfReviewDeniedError,
         SkillExecutionError,
     )
-    from llm_client import DeepSeekLLMClient, LLMClient, LLMClientError
+    from llm_client import (
+        OPENROUTER_MODEL_ID,
+        LLMClient,
+        LLMClientError,
+        OpenRouterLLMClient,
+    )
     from observability import configure_logging, get_request_id, log_workflow_event, set_request_id
     from plan_repository import (
         AuditRecord,
@@ -212,8 +222,8 @@ def require_roles(*allowed_roles: str):
     return dependency
 
 
-def get_llm_client() -> Callable[[], DeepSeekLLMClient]:
-    return DeepSeekLLMClient
+def get_llm_client() -> Callable[[], OpenRouterLLMClient]:
+    return OpenRouterLLMClient
 
 
 def _release_idempotency_safely(
@@ -350,8 +360,9 @@ def health() -> dict[str, str | bool]:
     return {
         "status": "ok",
         "version": app.version,
-        "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
-        "model_configured": bool(os.getenv("DEEPSEEK_API_KEY", "").strip()),
+        "provider": "OpenRouter",
+        "model": OPENROUTER_MODEL_ID,
+        "model_configured": bool(os.getenv("OPENROUTER_API_KEY", "").strip()),
     }
 
 
@@ -412,7 +423,7 @@ def current_user(
 )
 def ready(request: Request):
     checks = {
-        "model_configuration": "ok" if os.getenv("DEEPSEEK_API_KEY", "").strip() else "error",
+        "model_configuration": "ok" if os.getenv("OPENROUTER_API_KEY", "").strip() else "error",
         "traffic_guard": "ok" if hasattr(request.app.state, "model_api_guard") else "error",
         "validation_engine": "ok",
         "plan_storage": "ok",

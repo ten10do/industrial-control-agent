@@ -20,7 +20,7 @@ const PAYLOAD = {
   input_devices: "Level sensor",
   output_devices: "Pump",
   control_requirements: "Control the pump from the level signal.",
-  model_provider: "DeepSeek",
+  model_provider: "Ox Alpha",
 };
 
 
@@ -353,7 +353,7 @@ describe("health, examples, and model-free validation APIs", () => {
       new Response(JSON.stringify({
         status: "ok",
         version: "1.0.0",
-        model: "deepseek-chat",
+        model: "stealth/ox-alpha",
       }), {
         status: 200,
         headers: { "Content-Type": "application/json" },

@@ -6,7 +6,6 @@ from fastapi.testclient import TestClient
 from backend.llm_client import FakeLLMClient
 from backend.main import app, get_llm_client
 
-
 LOCAL_FRONTEND_ORIGIN = "http://localhost:5173"
 SAFETY_NOTICE_FRAGMENT = "qualified engineer"
 
@@ -26,7 +25,8 @@ def test_health_and_cors(client: TestClient) -> None:
     data = response.json()
     assert data["status"] == "ok"
     assert "version" in data
-    assert "model" in data
+    assert data["provider"] == "OpenRouter"
+    assert data["model"] == "stealth/ox-alpha"
     assert "model_configured" in data
     assert response.headers["access-control-allow-origin"] == LOCAL_FRONTEND_ORIGIN
 
@@ -35,7 +35,7 @@ def test_ready_reports_model_configuration_without_exposing_secrets(
     client: TestClient,
     monkeypatch,
 ) -> None:
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
 
     response = client.get("/ready")
 
@@ -56,14 +56,14 @@ def test_ready_reports_model_configuration_without_exposing_secrets(
             "identity_configuration": "ok",
         },
     }
-    assert "DEEPSEEK_API_KEY" not in response.text
+    assert "OPENROUTER_API_KEY" not in response.text
 
 
 def test_ready_returns_ok_when_required_components_are_configured(
     client: TestClient,
     monkeypatch,
 ) -> None:
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-placeholder")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-placeholder")
 
     response = client.get("/ready")
 
@@ -76,6 +76,22 @@ def test_auto_generates_request_id(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert re.fullmatch(r"[0-9a-f-]{36}", response.headers["x-request-id"])
+
+
+def test_generate_rejects_unsupported_model_provider(client: TestClient) -> None:
+    response = client.post(
+        "/generate",
+        json={
+            "control_object": "Motor",
+            "input_devices": "Start and stop buttons",
+            "output_devices": "Motor contactor",
+            "control_requirements": "Start and stop the motor safely.",
+            "model_provider": "DeepSeek",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "VALIDATION_ERROR"
 
 
 def test_uses_client_request_id(client: TestClient) -> None:
@@ -108,7 +124,7 @@ def test_generate_contract(client: TestClient) -> None:
             "input_devices": "High level sensor, low level sensor",
             "output_devices": "Pump, alarm lamp",
             "control_requirements": "Start at low level and stop at high level.",
-            "model_provider": "DeepSeek",
+            "model_provider": "Ox Alpha",
         },
     )
 
@@ -149,7 +165,7 @@ def test_optimize_contract(client: TestClient) -> None:
         json={
             "original_report": "# Original control plan",
             "optimize_requirement": "Add safety protection notes.",
-            "model_provider": "DeepSeek",
+            "model_provider": "Ox Alpha",
         },
     )
 
@@ -196,7 +212,7 @@ def test_unexpected_generate_error_is_sanitized(client: TestClient) -> None:
             "input_devices": "Test input",
             "output_devices": "Test output",
             "control_requirements": "Test requirement",
-            "model_provider": "DeepSeek",
+            "model_provider": "Ox Alpha",
         },
     )
 
@@ -206,7 +222,7 @@ def test_unexpected_generate_error_is_sanitized(client: TestClient) -> None:
     assert payload["request_id"] == "sanitize-1"
     assert "internal-configuration-detail" not in response.text
     assert "Traceback" not in response.text
-    assert "DEEPSEEK_API_KEY" not in response.text
+    assert "OPENROUTER_API_KEY" not in response.text
 def test_validate_endpoint_returns_report_without_calling_model(client: TestClient) -> None:
     response = client.post(
         "/validate",

@@ -1,6 +1,6 @@
 # 基于大模型的工业控制方案设计 Agent 平台
 
-一个面向工业自动化控制方案设计场景的 AI Agent 项目。系统采用 React + FastAPI 前后端分离架构，前端负责控制任务输入和结果展示，后端负责接口协议、Agent Workflow 编排、链路观测和 DeepSeek API 调用封装。
+一个面向工业自动化控制方案设计场景的 AI Agent 项目。系统采用 React + FastAPI 前后端分离架构，前端负责控制任务输入和结果展示，后端负责接口协议、Agent Workflow 编排、链路观测和 OpenRouter Ox Alpha API 调用封装。
 
 ## 在线体验
 
@@ -22,7 +22,7 @@
 - PLC 梯形图设计思路
 - Markdown 方案报告
 
-项目重点展示 AI Agent 在工业控制方案设计辅助场景中的应用实现，包括 React 前端组件化开发、FastAPI RESTful API、Pydantic 协议建模、Prompt Engineering、DeepSeek API 接入、Agent Workflow 编排、请求链路观测和前后端分离部署。
+项目重点展示 AI Agent 在工业控制方案设计辅助场景中的应用实现，包括 React 前端组件化开发、FastAPI RESTful API、Pydantic 协议建模、Prompt Engineering、OpenRouter Ox Alpha 接入、Agent Workflow 编排、请求链路观测和前后端分离部署。
 
 ## 技术栈
 
@@ -42,7 +42,7 @@
 - Python 3.11
 - Pydantic
 - OpenAI Python SDK
-- DeepSeek API
+- OpenRouter API（固定使用 `stealth/ox-alpha`）
 - Prompt Engineering
 
 工程与部署：
@@ -78,14 +78,14 @@ FastAPI 后端
         |
         | 后端环境变量
         v
-DeepSeek API
+OpenRouter Ox Alpha API
 ```
 
 架构说明：
 
 - React 前端负责控制任务输入、示例场景选择、状态展示、结果 Tabs、PLC I/O 表格和 Markdown 报告展示。
 - FastAPI 后端负责接口协议、Agent 工作流、大模型调用封装、错误处理和 CORS。
-- DeepSeek API Key 通过后端环境变量管理。
+- OpenRouter API Key 仅通过后端 `OPENROUTER_API_KEY` 环境变量管理。
 - 前端通过 `VITE_API_BASE_URL` 调用后端。
 - 后端通过 `FRONTEND_ORIGIN` 配置跨域来源。
 
@@ -127,7 +127,7 @@ POST /generate
 
 ## 工业控制规则校验与风险评估
 
-规则校验不是 DeepSeek 对方案的再次解读，也不会发起额外模型调用；它在 Agent 生成结构化方案后，由后端以固定顺序执行 14 条确定性规则。规则优先使用结构化 I/O 点表，文本字段采用集中维护的中英文关键词、别名、句段边界和否定语义策略。无法可靠判断的规则返回 `not_applicable`，单条规则异常会转换为脱敏的稳定结果，不会让方案生成接口失败。
+规则校验不是大模型对方案的再次解读，也不会发起额外模型调用；它在 Agent 生成结构化方案后，由后端以固定顺序执行 14 条确定性规则。规则优先使用结构化 I/O 点表，文本字段采用集中维护的中英文关键词、别名、句段边界和否定语义策略。无法可靠判断的规则返回 `not_applicable`，单条规则异常会转换为脱敏的稳定结果，不会让方案生成接口失败。
 
 校验覆盖 I/O 地址、名称和类型，启停、急停、过载、正反转互锁、执行器反馈、报警覆盖、水泵防干转、动作超时、自动/手动模式互锁、安全默认状态及 I/O 表完整性。报告输出风险分数、风险等级、命中证据、修改建议和相关设备或点位；即使存在 critical 风险，接口仍会返回原方案及 `validation_report`，由调用方进行工程复核。
 
@@ -238,7 +238,7 @@ CI 的 `Backend Tests` 任务执行 PostgreSQL 迁移、Python 语法检查、�
 2. FastAPI RESTful API：提供清晰的后端接口，支持前后端分离调用。
 3. Pydantic 请求 / 响应协议：定义稳定的数据结构，便于前端展示和后续维护。
 4. Agent Workflow：围绕工业控制方案生成流程组织需求分析、I/O 点表、控制逻辑、安全保护、梯形图思路和报告汇总。
-5. DeepSeek API 接入：使用 OpenAI-compatible API 封装大模型调用。
+5. OpenRouter Ox Alpha 接入：使用 OpenAI-compatible API，服务端固定模型 ID 为 `stealth/ox-alpha`。
 6. PLC I/O 点表结构化输出：支持地址、信号名称、信号类型、设备和描述等字段展示。
 7. 链路可观测性：使用 Request ID、结构化日志和步骤耗时串联 API、Workflow 与错误响应。
 8. 弹性模型调用：使用单层有限重试、应用层结果预算、带抖动退避和 `Retry-After`，并统一清洗异常信息。
@@ -310,7 +310,7 @@ http://localhost:5173
 
 后端：
 
-- `DEEPSEEK_API_KEY`：DeepSeek API Key，配置在后端运行环境中。
+- `OPENROUTER_API_KEY`：唯一必填的模型密钥，仅配置在后端运行环境中；模型与 API 地址均已固定。
 - `APP_ENV`：运行环境；缺省按 `production` 处理并强制要求 `AUTH_MODE=oidc`。本地免登录必须显式设为 `development`。
 - `FRONTEND_ORIGIN`：允许跨域访问后端的前端地址。
 - `LOG_LEVEL`：应用结构化日志级别，默认 `INFO`。
@@ -349,6 +349,8 @@ http://localhost:5173
 - `MODEL_API_REDIS_KEY_PREFIX`：Redis 键前缀，默认 `industrial-control-agent`。
 - `PLAN_STORAGE_PATH`：仅本地 SQLite 使用的路径，默认 `backend/data/plans.db`。
 
+> [Ox Alpha](https://openrouter.ai/stealth/ox-alpha) 是 OpenRouter 上的匿名供应商预览模型。供应商会保留提示词和输出，因此该接入仅适合非生产演示，不应提交工业敏感数据、真实设备参数或生产控制策略。
+
 前端：
 
 - `VITE_API_BASE_URL`：FastAPI 后端地址，例如本地 `http://localhost:8000` 或线上 Render 地址。
@@ -372,7 +374,7 @@ http://localhost:5173
 - Model Job Worker Start Command: `python -m backend.model_job_worker`
 - Runtime: Python 3.11.9
 - Environment Variables:
-  - `DEEPSEEK_API_KEY`
+  - `OPENROUTER_API_KEY`
   - `FRONTEND_ORIGIN`
   - `APP_ENV=production`
   - `AUTH_MODE=oidc`

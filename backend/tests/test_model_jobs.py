@@ -13,13 +13,12 @@ from backend.model_job_worker import ModelJobRunner
 from backend.plan_repository import PlanRepository, request_fingerprint
 from backend.traffic_guard import ModelAPITrafficGuard, TrafficGuardSettings
 
-
 GENERATE_PAYLOAD = {
     "control_object": "Motor",
     "input_devices": "Start, stop, emergency stop and overload inputs",
     "output_devices": "Motor contactor and alarm",
     "control_requirements": "Start and stop the motor with emergency protection.",
-    "model_provider": "DeepSeek",
+    "model_provider": "Ox Alpha",
 }
 
 
