@@ -1,12 +1,11 @@
-import logging
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
-
 
 PROJECT_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 DEFAULT_FRONTEND_ORIGIN = "http://localhost:5173"
@@ -136,9 +135,8 @@ class AppSettings:
             "AUDIT_SINK_REQUIRED",
         )
         audit_sink_url = os.getenv("AUDIT_SINK_URL", "").strip()
-        if audit_sink_required:
-            if urlparse(audit_sink_url).scheme != "https":
-                raise ValueError("AUDIT_SINK_URL must use HTTPS when the sink is required")
+        if audit_sink_required and urlparse(audit_sink_url).scheme != "https":
+            raise ValueError("AUDIT_SINK_URL must use HTTPS when the sink is required")
 
         return cls(
             environment=environment,

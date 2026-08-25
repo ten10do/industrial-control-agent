@@ -1,7 +1,7 @@
 import os
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterator
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager, suppress
 
 from fastapi import Depends, FastAPI, Header, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -242,7 +242,7 @@ def _release_idempotency_safely(
             request_hash=request_hash,
         )
     except Exception as exc:
-        try:
+        with suppress(Exception):
             log_workflow_event(
                 request_id=get_request_id(),
                 workflow_name="idempotency",
@@ -250,8 +250,6 @@ def _release_idempotency_safely(
                 status="error",
                 error_type=type(exc).__name__,
             )
-        except Exception:
-            pass
 
 
 @contextmanager
@@ -278,7 +276,7 @@ def guarded_llm_client(
             if callable(close):
                 close()
         except Exception as exc:
-            try:
+            with suppress(Exception):
                 log_workflow_event(
                     request_id=get_request_id(),
                     workflow_name="llm_client",
@@ -286,8 +284,6 @@ def guarded_llm_client(
                     status="error",
                     error_type=type(exc).__name__,
                 )
-            except Exception:
-                pass
         finally:
             lease.release()
 
@@ -360,6 +356,7 @@ def health() -> dict[str, str | bool]:
     return {
         "status": "ok",
         "version": app.version,
+        "commit": os.getenv("RENDER_GIT_COMMIT", "local"),
         "provider": "OpenRouter",
         "model": OPENROUTER_MODEL_ID,
         "model_configured": bool(os.getenv("OPENROUTER_API_KEY", "").strip()),

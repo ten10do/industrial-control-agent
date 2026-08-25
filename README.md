@@ -320,6 +320,7 @@ http://localhost:5173
 - `DATABASE_SSLMODE`：PostgreSQL TLS 模式；生产只接受 `require`、`verify-ca` 或 `verify-full`。
 - `DATABASE_CONNECT_TIMEOUT_SECONDS`：数据库建连超时，默认 `5`，最大 `30`。
 - `AUTH_MODE`：`disabled`、`oidc` 或仅供自动化测试使用的 `hs256`；生产环境必须为 `oidc`。
+- `AUTH_DISABLED_ROLES`：仅在 `AUTH_MODE=disabled` 时为本地或演示身份授予的角色；公开演示建议只配置 `designer`。
 - `AUTH_ISSUER`：访问令牌必须精确匹配的 OIDC issuer。
 - `AUTH_AUDIENCE`：本 API 的 audience。
 - `AUTH_JWKS_URL`：OIDC 公钥地址；OIDC 模式下必须使用 HTTPS。

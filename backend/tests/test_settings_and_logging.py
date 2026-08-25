@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from backend.settings import AppSettings, DEFAULT_FRONTEND_ORIGIN, load_app_settings
+from backend.settings import DEFAULT_FRONTEND_ORIGIN, AppSettings, load_app_settings
 
 
 def test_settings_load_frontend_origin_before_app_construction(tmp_path, monkeypatch) -> None:

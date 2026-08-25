@@ -1,12 +1,11 @@
-from backend.validation import RuleStatus, Severity, build_default_engine
-from backend.validation.catalog import is_monitoring_only
 from backend.tests.validation_fixtures import (
     default_rule_result,
     io_point,
     monitoring_context,
     validation_context,
 )
-
+from backend.validation import RuleStatus, Severity, build_default_engine
+from backend.validation.catalog import is_monitoring_only
 
 EXPECTED_RULES = (
     ("IO_DUPLICATE_ADDRESS", Severity.HIGH),

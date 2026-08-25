@@ -14,7 +14,6 @@ from backend.errors import LLMResponseFormatError, SkillExecutionError
 from backend.llm_client import FakeLLMClient
 from backend.schemas import GenerateRequest, OptimizeRequest
 
-
 SAFETY_NOTICE_FRAGMENT = "qualified engineer"
 
 

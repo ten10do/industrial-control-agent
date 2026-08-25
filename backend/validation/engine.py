@@ -1,5 +1,6 @@
 import time
 from collections.abc import Iterable
+from contextlib import suppress
 
 try:
     from ..observability import log_validation_event
@@ -16,14 +17,12 @@ from .models import (
     ValidationReport,
     ValidationStatus,
 )
-from .scoring import SCORING_STATUSES, risk_level_floor, risk_level_for_score, score_rule_results
+from .scoring import SCORING_STATUSES, risk_level_floor, score_rule_results
 
 
 def _log_validation_event_safely(**event) -> None:
-    try:
+    with suppress(Exception):
         log_validation_event(**event)
-    except Exception:
-        pass
 
 
 def _unavailable_report(context: ValidationContext) -> ValidationReport:

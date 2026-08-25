@@ -13,7 +13,6 @@ from backend.validation.device_semantics import (
     has_controlled_device,
 )
 
-
 MOTOR_RULE_EXPECTATIONS = {
     "START_STOP_INCOMPLETE": RuleStatus.FAILED,
     "EMERGENCY_STOP_MISSING": RuleStatus.FAILED,

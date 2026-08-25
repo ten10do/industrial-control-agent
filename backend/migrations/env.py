@@ -7,7 +7,6 @@ from sqlalchemy.engine import make_url
 
 from backend.database_schema import metadata
 
-
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name, disable_existing_loggers=False)

@@ -1,14 +1,12 @@
 import threading
 import time
 
-import pytest
-
+from backend.llm_client import CircuitBreaker
 from backend.traffic_control import (
     ConcurrencyLimiter,
     SlidingWindowRateLimiter,
     jittered_backoff,
 )
-from backend.llm_client import CircuitBreaker
 
 
 class TestSlidingWindowRateLimiter:

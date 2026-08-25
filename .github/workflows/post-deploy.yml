@@ -1,0 +1,60 @@
+name: Post-Deploy Verification
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: post-deploy-main
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Production Smoke Test
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TARGET_COMMIT: ${{ github.event.workflow_run.head_sha }}
+
+    steps:
+      - name: Verify deployed backend revision and readiness
+        run: |
+          for i in $(seq 1 75); do
+            HEALTH=$(curl --fail --silent --show-error https://industrial-control-agent-backend.onrender.com/health || true)
+            DEPLOYED_COMMIT=$(jq -r '.commit // ""' <<<"$HEALTH")
+            if [ "$DEPLOYED_COMMIT" = "$TARGET_COMMIT" ]; then
+              echo "Render is serving commit $TARGET_COMMIT"
+              break
+            fi
+            if [ "$i" = "75" ]; then
+              echo "Render did not deploy commit $TARGET_COMMIT"
+              exit 1
+            fi
+            echo "Attempt $i: deployed commit is ${DEPLOYED_COMMIT:-unknown}; waiting..."
+            sleep 10
+          done
+
+          READY=$(curl --fail --silent --show-error https://industrial-control-agent-backend.onrender.com/ready)
+          test "$(jq -r '.status' <<<"$READY")" = "ready"
+          test "$(jq -r '.checks.database_schema' <<<"$READY")" = "ok"
+          test "$(jq -r '.checks.model_job_worker' <<<"$READY")" = "ok"
+          echo "Backend readiness checks passed"
+
+      - name: Verify deployed frontend
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://industrial-control-agent.netlify.app || echo "000")
+          if [ "$STATUS" = "200" ]; then
+            echo "Frontend healthy"
+          else
+            echo "Frontend returned HTTP $STATUS"
+            exit 1
+          fi

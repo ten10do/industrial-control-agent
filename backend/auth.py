@@ -23,6 +23,7 @@ OIDC_ALLOWED_ALGORITHMS = frozenset(
 class AuthSettings:
     environment: str
     mode: AuthMode
+    disabled_roles: frozenset[str] = KNOWN_ROLES
     issuer: str = ""
     audience: str = ""
     jwks_url: str = ""
@@ -53,6 +54,8 @@ class AuthSettings:
                 raise ValueError("AUTH_ALGORITHMS must be HS256 in hs256 mode")
             if len(self.hs256_secret.encode("utf-8")) < 32:
                 raise ValueError("AUTH_HS256_SECRET must contain at least 32 bytes")
+        if not self.disabled_roles or not self.disabled_roles.issubset(KNOWN_ROLES):
+            raise ValueError("AUTH_DISABLED_ROLES must contain only known roles")
         if self.clock_skew_seconds < 0 or self.clock_skew_seconds > 300:
             raise ValueError("AUTH_CLOCK_SKEW_SECONDS must be between 0 and 300")
 
@@ -72,6 +75,14 @@ class AuthSettings:
             for algorithm in raw_algorithms.split(",")
             if algorithm.strip()
         )
+        disabled_roles = frozenset(
+            role
+            for role in values.get(
+                "AUTH_DISABLED_ROLES",
+                "designer reviewer admin",
+            ).replace(",", " ").split()
+            if role
+        )
         try:
             clock_skew_seconds = int(
                 values.get("AUTH_CLOCK_SKEW_SECONDS", "30").strip(),
@@ -81,6 +92,7 @@ class AuthSettings:
         return cls(
             environment=values.get("APP_ENV", "production").strip().lower(),
             mode=raw_mode,
+            disabled_roles=disabled_roles,
             issuer=values.get("AUTH_ISSUER", "").strip(),
             audience=values.get("AUTH_AUDIENCE", "").strip(),
             jwks_url=values.get("AUTH_JWKS_URL", "").strip(),
@@ -122,7 +134,7 @@ class TokenVerifier:
             return AuthPrincipal(
                 subject="local-development",
                 display_name="Local Development",
-                roles=KNOWN_ROLES,
+                roles=self.settings.disabled_roles,
                 authenticated=False,
             )
         if not token:

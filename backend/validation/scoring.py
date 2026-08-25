@@ -2,7 +2,6 @@ from collections.abc import Iterable
 
 from .models import RiskLevel, RuleResult, RuleStatus, Severity
 
-
 SEVERITY_WEIGHTS: dict[Severity, int] = {
     Severity.CRITICAL: 30,
     Severity.HIGH: 15,

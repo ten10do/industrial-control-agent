@@ -1,6 +1,6 @@
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.utils import format_datetime
 
 import httpx
@@ -301,7 +301,7 @@ def test_rate_limit_retry_honors_http_date_retry_after() -> None:
     clock = _Clock()
     wall_clock = 1_000.0
     retry_at = format_datetime(
-        datetime.fromtimestamp(wall_clock + 7, tz=timezone.utc),
+        datetime.fromtimestamp(wall_clock + 7, tz=UTC),
         usegmt=True,
     )
     client = _Client([_rate_limit_error(retry_at), '{"ok": true}'])

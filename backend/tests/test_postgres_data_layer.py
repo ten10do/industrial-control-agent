@@ -5,7 +5,6 @@ import pytest
 
 from backend.plan_repository import PlanRepository, request_fingerprint
 
-
 POSTGRES_URL = os.getenv("TEST_POSTGRES_URL", "")
 
 

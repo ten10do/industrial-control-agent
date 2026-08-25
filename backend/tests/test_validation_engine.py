@@ -6,6 +6,7 @@ import pytest
 import backend.validation as validation_module
 import backend.validation.engine as validation_engine_module
 from backend.observability import logger
+from backend.tests.validation_fixtures import validation_context
 from backend.validation import (
     RiskLevel,
     RuleEngine,
@@ -15,7 +16,6 @@ from backend.validation import (
     ValidationStatus,
     validate_context,
 )
-from backend.tests.validation_fixtures import validation_context
 
 
 class FixedRule(ValidationRule):

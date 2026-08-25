@@ -6,8 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import update
 
 from backend.database_schema import model_jobs
-from backend.errors import LLMResponseFormatError
-from backend.errors import ModelJobQueueFullError
+from backend.errors import LLMResponseFormatError, ModelJobQueueFullError
 from backend.llm_client import FakeLLMClient
 from backend.main import app
 from backend.model_job_worker import ModelJobRunner

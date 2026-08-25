@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-
 _TEST_STORAGE_DIRECTORY = Path(tempfile.mkdtemp(prefix="industrial-control-agent-tests-"))
 os.environ["PLAN_STORAGE_PATH"] = str(_TEST_STORAGE_DIRECTORY / "plans.db")
 os.environ["APP_ENV"] = "test"

@@ -1,5 +1,5 @@
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import jwt
@@ -47,7 +47,7 @@ def token_for(
     secret: str = SECRET,
     expires_delta: timedelta = timedelta(minutes=10),
 ) -> str:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return jwt.encode(
         {
             "sub": subject,
@@ -82,6 +82,32 @@ def test_production_environment_requires_oidc() -> None:
         AuthSettings(environment="production", mode="disabled")
     with pytest.raises(ValueError, match="AUTH_MODE=oidc"):
         AuthSettings.from_env({})
+
+
+def test_disabled_mode_can_limit_demo_roles() -> None:
+    settings = AuthSettings.from_env(
+        {
+            "APP_ENV": "development",
+            "AUTH_MODE": "disabled",
+            "AUTH_DISABLED_ROLES": "designer",
+        },
+    )
+
+    principal = TokenVerifier(settings).verify(None)
+
+    assert principal.roles == frozenset({"designer"})
+
+
+def test_disabled_mode_rejects_unknown_or_empty_roles() -> None:
+    for roles in ("", "designer owner"):
+        with pytest.raises(ValueError, match="AUTH_DISABLED_ROLES"):
+            AuthSettings.from_env(
+                {
+                    "APP_ENV": "development",
+                    "AUTH_MODE": "disabled",
+                    "AUTH_DISABLED_ROLES": roles,
+                },
+            )
 
 
 def test_oidc_configuration_rejects_symmetric_algorithms_and_insecure_jwks() -> None:
@@ -121,7 +147,7 @@ def test_verifier_rejects_invalid_signature_and_registered_claims(token: str) ->
 
 
 def test_verifier_supports_nested_role_claims() -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     token = jwt.encode(
         {
             "sub": "keycloak-user",

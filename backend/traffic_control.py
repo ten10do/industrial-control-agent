@@ -2,7 +2,7 @@ import random
 import threading
 import time
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
@@ -74,7 +74,6 @@ def _client_ip(*args: str) -> str:
 
 
 def acquire_request(ip: str, x_forwarded: str, request_timeout: float | None = None) -> None:
-    timeout = request_timeout if request_timeout is not None else _DEFAULT_CONFIG.request_timeout_seconds
     key = _client_ip(ip, x_forwarded)
 
     if not _rate_limiter.acquire(key):

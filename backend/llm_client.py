@@ -6,10 +6,10 @@ import threading
 import time
 from collections.abc import Callable
 from contextlib import suppress
-from datetime import timezone
+from datetime import UTC
 from email.utils import parsedate_to_datetime
 from queue import Empty, Queue
-from typing import Any, Optional, Protocol
+from typing import Any, Protocol
 
 from openai import (
     APIConnectionError,
@@ -30,7 +30,7 @@ else:
 
 
 class LLMClient(Protocol):
-    def chat(self, prompt: str, system_prompt: Optional[str] = None, request_id: Optional[str] = None) -> str: ...
+    def chat(self, prompt: str, system_prompt: str | None = None, request_id: str | None = None) -> str: ...
 
 
 class LLMClientError(RuntimeError):
@@ -85,7 +85,7 @@ OPENROUTER_APP_TITLE = "Industrial Control Agent"
 class OpenRouterLLMClient:
     def __init__(
         self,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         base_url: str = OPENROUTER_BASE_URL,
         model: str = OPENROUTER_MODEL_ID,
         temperature: float = 0.2,
@@ -130,7 +130,7 @@ class OpenRouterLLMClient:
             max_retries=0,
         )
 
-    def chat(self, prompt: str, system_prompt: Optional[str] = None, request_id: Optional[str] = None) -> str:
+    def chat(self, prompt: str, system_prompt: str | None = None, request_id: str | None = None) -> str:
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
@@ -242,7 +242,7 @@ class OpenRouterLLMClient:
             return result
         raise result
 
-    def _log_retry(self, status: str, retry_count: int, error_type: str, request_id: Optional[str]) -> None:
+    def _log_retry(self, status: str, retry_count: int, error_type: str, request_id: str | None) -> None:
         log_workflow_event(
             request_id=request_id or get_request_id(),
             workflow_name="llm_client",
@@ -256,7 +256,7 @@ class OpenRouterLLMClient:
         self,
         deadline: float,
         retry_count: int,
-        request_id: Optional[str],
+        request_id: str | None,
     ) -> None:
         if self.clock_fn() >= deadline:
             self._log_retry("error", retry_count, "DeadlineExceeded", request_id)
@@ -306,7 +306,7 @@ class OpenRouterLLMClient:
             return 0.0
         try:
             if retry_at.tzinfo is None:
-                retry_at = retry_at.replace(tzinfo=timezone.utc)
+                retry_at = retry_at.replace(tzinfo=UTC)
             seconds = retry_at.timestamp() - self.wall_clock_fn()
         except (OSError, OverflowError, ValueError):
             return 0.0
@@ -321,7 +321,7 @@ class OpenRouterLLMClient:
 class FakeLLMClient:
     """Deterministic local client used by tests; it never performs network I/O."""
 
-    def chat(self, prompt: str, system_prompt: Optional[str] = None, request_id: Optional[str] = None) -> str:
+    def chat(self, prompt: str, system_prompt: str | None = None, request_id: str | None = None) -> str:
         if "TASK:OPTIMIZE_CONTROL_PLAN" in prompt:
             return json.dumps(
                 {
