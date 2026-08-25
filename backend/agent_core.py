@@ -83,7 +83,7 @@ def _parse_json_object(raw_content: str) -> dict[str, Any]:
             if isinstance(candidate, dict):
                 candidates.append((start, start + length, candidate))
         if not candidates:
-            raise LLMResponseFormatError()
+            raise LLMResponseFormatError() from None
         _, _, payload = max(candidates, key=lambda item: (item[1], -item[0]))
 
     if not isinstance(payload, dict):

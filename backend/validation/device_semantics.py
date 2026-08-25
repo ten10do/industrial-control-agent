@@ -1,12 +1,11 @@
 import re
 import unicodedata
+from collections.abc import Iterable
 from dataclasses import dataclass
-from enum import Enum
-from typing import Iterable
+from enum import StrEnum
 
 from .catalog import canonical_signal_type, normalize_name, normalize_text
 from .models import ValidationContext
-
 
 MOTOR_KINDS = frozenset({"motor", "pump", "fan"})
 PUMP_KINDS = frozenset({"pump"})
@@ -191,7 +190,7 @@ _PARALLEL_ITEM_SEPARATOR_RE = re.compile(
 )
 
 
-class DeviceState(str, Enum):
+class DeviceState(StrEnum):
     CONTROLLED = "controlled"
     PRESENT_UNCONTROLLED = "present_uncontrolled"
     ABSENT = "absent"
@@ -826,14 +825,6 @@ def _scoped_texts(
                     continue
                 seen_owner_matches.add(identity)
                 owner_matches.append((match_start, match_end, key))
-            explicit_owner_keys = tuple(
-                key
-                for key in dict.fromkeys(
-                    key
-                    for _, _, key in owner_matches
-                )
-                if key in instance_keys
-            )
             universal_kinds = _universal_kinds(
                 clause,
                 instance_kinds,

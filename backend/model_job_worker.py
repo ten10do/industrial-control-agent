@@ -4,6 +4,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 
 if __package__:
@@ -173,10 +174,8 @@ class ModelJobRunner:
         finally:
             close = getattr(client, "close", None)
             if callable(close):
-                try:
+                with suppress(Exception):
                     close()
-                except Exception:
-                    pass
             lease.release()
 
     def _maintain_lease(

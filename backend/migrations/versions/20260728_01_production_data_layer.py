@@ -4,7 +4,6 @@ from alembic import op
 
 from backend.database_schema import metadata
 
-
 revision = "20260728_01"
 down_revision = None
 branch_labels = None

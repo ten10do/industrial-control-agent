@@ -1,4 +1,4 @@
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -45,37 +45,37 @@ class GenerateResponse(BaseModel):
     ladder_idea: str = Field(min_length=1, max_length=40000)
     report_markdown: str = Field(min_length=1, max_length=100000)
     safety_notice: str = Field(min_length=1, max_length=1000)
-    validation_report: Optional[ValidationReport] = None
-    safety_gate: Optional[SafetyGate] = None
-    plan_id: Optional[str] = None
-    parent_plan_id: Optional[str] = None
-    content_hash: Optional[str] = None
-    created_at: Optional[str] = None
+    validation_report: ValidationReport | None = None
+    safety_gate: SafetyGate | None = None
+    plan_id: str | None = None
+    parent_plan_id: str | None = None
+    content_hash: str | None = None
+    created_at: str | None = None
 
 
 class OptimizeRequest(RequestModel):
     original_report: str = Field(min_length=1, max_length=50000)
     optimize_requirement: str = Field(min_length=1, max_length=10000)
     model_provider: Literal["Ox Alpha"] = "Ox Alpha"
-    plan_id: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    plan_id: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 class OptimizeResponse(BaseModel):
     optimized_report: str = Field(min_length=1, max_length=120000)
     change_summary: str = Field(min_length=1, max_length=20000)
     safety_notice: str = Field(min_length=1, max_length=1000)
-    validation_report: Optional[ValidationReport] = None
-    safety_gate: Optional[SafetyGate] = None
-    plan_id: Optional[str] = None
-    parent_plan_id: Optional[str] = None
-    content_hash: Optional[str] = None
-    created_at: Optional[str] = None
+    validation_report: ValidationReport | None = None
+    safety_gate: SafetyGate | None = None
+    plan_id: str | None = None
+    parent_plan_id: str | None = None
+    content_hash: str | None = None
+    created_at: str | None = None
 
 
 class LatestReviewResponse(BaseModel):
     review_id: str
     decision: Literal["approved", "rejected"]
-    reviewer_sub: Optional[str] = None
+    reviewer_sub: str | None = None
     reviewer: str
     comment: str
     reviewed_at: str
@@ -83,29 +83,29 @@ class LatestReviewResponse(BaseModel):
 
 class PlanResponse(BaseModel):
     plan_id: str
-    parent_plan_id: Optional[str] = None
+    parent_plan_id: str | None = None
     source: str
     content_hash: str
     report_markdown: str
     response: dict
     review_required: bool
     export_allowed: bool
-    created_by: Optional[str] = None
-    created_by_name: Optional[str] = None
-    latest_review: Optional[LatestReviewResponse] = None
+    created_by: str | None = None
+    created_by_name: str | None = None
+    latest_review: LatestReviewResponse | None = None
     created_at: str
 
 
 class PlanSummaryResponse(BaseModel):
     plan_id: str
-    parent_plan_id: Optional[str] = None
+    parent_plan_id: str | None = None
     source: str
     content_hash: str
     review_required: bool
     export_allowed: bool
-    created_by: Optional[str] = None
-    created_by_name: Optional[str] = None
-    latest_decision: Optional[Literal["approved", "rejected"]] = None
+    created_by: str | None = None
+    created_by_name: str | None = None
+    latest_decision: Literal["approved", "rejected"] | None = None
     created_at: str
 
 
@@ -122,7 +122,7 @@ class ReviewResponse(BaseModel):
     review_id: str
     plan_id: str
     decision: Literal["approved", "rejected"]
-    reviewer_sub: Optional[str] = None
+    reviewer_sub: str | None = None
     reviewer: str
     comment: str
     content_hash: str
@@ -143,13 +143,13 @@ class AuditEventResponse(BaseModel):
     action: str
     resource_type: str
     resource_id: str
-    plan_hash: Optional[str] = None
-    request_id: Optional[str] = None
+    plan_hash: str | None = None
+    request_id: str | None = None
     details: dict
     previous_hash: str
     event_hash: str
     signature_algorithm: Literal["sha256", "hmac-sha256"]
-    signing_key_id: Optional[str] = None
+    signing_key_id: str | None = None
     created_at: str
 
 
@@ -172,14 +172,14 @@ class ModelJobResponse(BaseModel):
     progress: int = Field(ge=0, le=100)
     attempts: int = Field(ge=0)
     max_attempts: int = Field(gt=0)
-    result: Optional[dict] = None
-    error_code: Optional[str] = None
-    error_message: Optional[str] = None
-    plan_id: Optional[str] = None
-    parent_plan_id: Optional[str] = None
+    result: dict | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    plan_id: str | None = None
+    parent_plan_id: str | None = None
     created_at: str
-    started_at: Optional[str] = None
-    finished_at: Optional[str] = None
+    started_at: str | None = None
+    finished_at: str | None = None
     updated_at: str
 
 
@@ -195,8 +195,8 @@ class ReadinessResponse(BaseModel):
 class ErrorResponse(BaseModel):
     code: str = "APPLICATION_ERROR"
     message: str
-    detail: Optional[str] = None
-    request_id: Optional[str] = None
+    detail: str | None = None
+    request_id: str | None = None
 
 class ValidateRequest(RequestModel):
     plan_text: str = Field(min_length=1, max_length=100000)

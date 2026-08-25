@@ -3,7 +3,6 @@ import unicodedata
 from collections.abc import Sequence
 from itertools import product
 
-
 _SEPARATOR_RE = re.compile(r"[\s,，。;；:：、|/\\()\[\]{}<>《》\"'`~!！?？]+")
 _NAME_SEPARATOR_RE = re.compile(r"[\s_\-./\\:：,，;；]+")
 _SENTENCE_SPLIT_RE = re.compile(r"(?:[。！？!?；;\r\n]+|(?<!\d)\.(?!\d))")

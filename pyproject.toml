@@ -6,6 +6,9 @@ line-length = 120
 select = ["E", "F", "W", "I", "B", "UP", "SIM"]
 ignore = ["E501"]
 
+[tool.ruff.lint.per-file-ignores]
+"backend/main.py" = ["B008"]
+
 [tool.pytest.ini_options]
 addopts = "--cov=backend --cov-report=term --cov-fail-under=70 -q"
 testpaths = ["backend/tests"]

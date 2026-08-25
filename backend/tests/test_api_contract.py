@@ -78,6 +78,15 @@ def test_auto_generates_request_id(client: TestClient) -> None:
     assert re.fullmatch(r"[0-9a-f-]{36}", response.headers["x-request-id"])
 
 
+def test_health_exposes_deployed_commit(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "abc123")
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json()["commit"] == "abc123"
+
+
 def test_generate_rejects_unsupported_model_provider(client: TestClient) -> None:
     response = client.post(
         "/generate",

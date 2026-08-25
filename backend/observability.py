@@ -3,10 +3,9 @@ import logging
 import os
 import sys
 import time
-from contextvars import ContextVar
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Iterator
-
+from contextvars import ContextVar
 
 request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
 logger = logging.getLogger("industrial_control_agent")

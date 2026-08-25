@@ -13,7 +13,6 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 
-
 metadata = MetaData()
 
 plans = Table(

@@ -1,10 +1,10 @@
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class RuleStatus(str, Enum):
+class RuleStatus(StrEnum):
     PASSED = "passed"
     WARNING = "warning"
     FAILED = "failed"
@@ -12,7 +12,7 @@ class RuleStatus(str, Enum):
     ERROR = "error"
 
 
-class Severity(str, Enum):
+class Severity(StrEnum):
     INFO = "info"
     LOW = "low"
     MEDIUM = "medium"
@@ -20,7 +20,7 @@ class Severity(str, Enum):
     CRITICAL = "critical"
 
 
-class RiskLevel(str, Enum):
+class RiskLevel(StrEnum):
     UNKNOWN = "unknown"
     LOW = "low"
     MEDIUM = "medium"
@@ -28,7 +28,7 @@ class RiskLevel(str, Enum):
     CRITICAL = "critical"
 
 
-class ValidationStatus(str, Enum):
+class ValidationStatus(StrEnum):
     COMPLETE = "complete"
     PARTIAL = "partial"
     UNAVAILABLE = "unavailable"
