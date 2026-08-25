@@ -120,8 +120,10 @@ def test_ox_alpha_request_bounds_output_and_reasoning() -> None:
     llm = OpenRouterLLMClient(client=client)
 
     assert llm.chat("prompt") == '{"ok": true}'
-    assert captured["max_tokens"] == 4096
-    assert captured["reasoning_effort"] == "low"
+    assert captured["max_tokens"] == 8192
+    assert captured["extra_body"] == {
+        "reasoning": {"effort": "low", "exclude": True},
+    }
 
 
 def test_hard_attempt_timeout_closes_a_trickling_client() -> None:

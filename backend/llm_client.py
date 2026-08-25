@@ -74,7 +74,7 @@ class CircuitBreaker:
 
 DEFAULT_ATTEMPT_TIMEOUT_SECONDS = 60.0
 DEFAULT_TOTAL_TIMEOUT_SECONDS = 90.0
-DEFAULT_MAX_OUTPUT_TOKENS = 4096
+DEFAULT_MAX_OUTPUT_TOKENS = 8192
 RETRY_JITTER_RATIO = 0.25
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_MODEL_ID = "stealth/ox-alpha"
@@ -216,9 +216,14 @@ class OpenRouterLLMClient:
                     messages=messages,
                     temperature=self.temperature,
                     max_tokens=self.max_output_tokens,
-                    reasoning_effort=self.reasoning_effort,
                     response_format={"type": "json_object"},
                     timeout=attempt_timeout,
+                    extra_body={
+                        "reasoning": {
+                            "effort": self.reasoning_effort,
+                            "exclude": True,
+                        },
+                    },
                 )
             except Exception as exc:
                 result_queue.put((False, exc))
